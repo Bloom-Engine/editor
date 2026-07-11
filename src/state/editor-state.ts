@@ -34,7 +34,16 @@ export interface ModelEntry {
   loaded: boolean;
 }
 
-export interface AssetCatalog {
+// NB: AssetCatalog and HandleMap are CLASSES, not interfaces, and that is
+// load-bearing. Perry 0.5.1208 miscompiles field access on an *interface*
+// that declares more than one `Map` field: the field reads back as garbage,
+// so `Array.from(handles.byEntity.values())` yielded bogus entries that then
+// blew up as `TypeError: Expected number for native f64 parameter` on the
+// first frame. Class fields resolve correctly. Full write-up + repro table:
+// docs/perry-map-size-av.md. Also: never read `.size` on a Map through a
+// property chain (still miscompiled even on classes) — count via keys()/a
+// parallel array. `Set.size` is safe.
+export class AssetCatalog {
   models: Map<string, ModelEntry>;    // Key = relPath.
   prefabs: Map<string, PrefabData>;   // Key = prefab id.
   modelOrder: string[];               // Stable iteration order for the panel.
@@ -42,6 +51,16 @@ export interface AssetCatalog {
   filter: string;                     // Substring filter for the asset panel.
   activeCategory: string;             // "all" or a category slug.
   activeTab: number;                  // 0 = Models, 1 = Prefabs.
+
+  constructor() {
+    this.models = new Map<string, ModelEntry>();
+    this.prefabs = new Map<string, PrefabData>();
+    this.modelOrder = [];
+    this.prefabOrder = [];
+    this.filter = '';
+    this.activeCategory = 'all';
+    this.activeTab = 0;
+  }
 }
 
 export interface Selection {
@@ -72,9 +91,15 @@ export interface BrushSettings {
   activeLayerIdx: number;              // Used by paint brush.
 }
 
-export interface HandleMap {
+// Class, not an interface — see the note on AssetCatalog above.
+export class HandleMap {
   byEntity: Map<EntityId, number>;     // SceneNodeHandle.
   byHandle: Map<number, EntityId>;
+
+  constructor() {
+    this.byEntity = new Map<EntityId, number>();
+    this.byHandle = new Map<number, EntityId>();
+  }
 }
 
 // ---- main state object -----------------------------------------------------
@@ -148,15 +173,7 @@ import { createEmptyWorld } from 'bloom/world';
 export function createEditorState(): EditorState {
   return {
     project: null,
-    catalog: {
-      models: new Map<string, ModelEntry>(),
-      prefabs: new Map<string, PrefabData>(),
-      modelOrder: [],
-      prefabOrder: [],
-      filter: '',
-      activeCategory: 'all',
-      activeTab: 0,
-    },
+    catalog: new AssetCatalog(),
     worldPath: null,
     world: createEmptyWorld('untitled', 'Untitled World'),
     editingPrefab: null,
@@ -184,10 +201,7 @@ export function createEditorState(): EditorState {
     undoStack: [],
     redoStack: [],
     maxHistory: 200,
-    handles: {
-      byEntity: new Map<EntityId, number>(),
-      byHandle: new Map<number, EntityId>(),
-    },
+    handles: new HandleMap(),
     terrainHandle: 0,
     pendingRebuild: new Set<EntityId>(),
     pendingDestroy: new Set<number>(),
@@ -226,7 +240,22 @@ export function handleOfEntity(map: HandleMap, id: EntityId): number {
   return h !== undefined ? h : 0;
 }
 
-// ---- next entity id --------------------------------------------------------
+// ---- id counters -------------------------------------------------------------
+
+// All id counters persist in world.metadata so they survive editor restarts.
+// A fresh in-memory counter would mint duplicate ids on a reopened world,
+// and commands find their targets by id — a duplicate makes undo remove the
+// wrong object.
+export function nextCounterId(state: EditorState, counterKey: string, prefix: string): string {
+  const current = state.world.metadata[counterKey];
+  let n = 1;
+  if (current !== undefined) {
+    n = parseInt(current);
+    if (n !== n) n = 1; // NaN guard
+  }
+  state.world.metadata[counterKey] = (n + 1).toString();
+  return prefix + n.toString();
+}
 
 export function nextEntityId(state: EditorState): string {
   const key = 'nextEntityId';

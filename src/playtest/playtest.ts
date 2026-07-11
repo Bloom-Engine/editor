@@ -16,7 +16,7 @@ const LOOK_SPEED = 0.003;
 
 export function updatePlaytest(state: EditorState): void {
   // Toggle with Ctrl+P.
-  if ((isKeyDown(Key.LeftControl) || isKeyDown(Key.LeftSuper)) && isKeyPressed(Key.P)) {
+  if ((isKeyDown(Key.LEFT_CONTROL) || isKeyDown(Key.LEFT_SUPER)) && isKeyPressed(Key.P)) {
     state.playtesting = !state.playtesting;
     if (state.playtesting) {
       // Enter: set camera to current orbit eye position.
@@ -56,8 +56,8 @@ export function updatePlaytest(state: EditorState): void {
   if (isKeyDown(Key.S)) { mx -= sinYaw; mz -= cosYaw; }
   if (isKeyDown(Key.A)) { mx += cosYaw; mz -= sinYaw; }
   if (isKeyDown(Key.D)) { mx -= cosYaw; mz += sinYaw; }
-  if (isKeyDown(Key.Space)) my += 1;
-  if (isKeyDown(Key.LeftShift)) my -= 1;
+  if (isKeyDown(Key.SPACE)) my += 1;
+  if (isKeyDown(Key.LEFT_SHIFT)) my -= 1;
 
   const speed = FLY_SPEED * dt;
   state.camera.target[0] += mx * speed;

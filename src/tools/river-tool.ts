@@ -4,7 +4,7 @@
 
 import { isMouseButtonPressed, isKeyPressed, getMouseX, getMouseY, getScreenWidth, getScreenHeight, MouseButton, Key, drawRay } from 'bloom';
 import { RiverSpline, Vec3Lit } from 'bloom/world';
-import { EditorState, Command } from '../state/editor-state';
+import { EditorState, Command, nextCounterId } from '../state/editor-state';
 import { runCommand } from '../state/commands';
 import { mouseToWorldRay, rayPlaneIntersect } from '../viewport/ray';
 
@@ -28,7 +28,16 @@ interface RiverToolState {
 }
 
 const toolState: RiverToolState = { placing: false, points: [], lastClickTime: 0 };
-let riverIdCounter = 1;
+
+// Ids come from a world-metadata counter (survives restarts) with a
+// collision guard against hand-authored ids.
+function nextRiverId(state: EditorState): string {
+  let id = nextCounterId(state, 'nextRiverId', 'river_');
+  while (state.world.rivers.some(r => r.id === id)) {
+    id = nextCounterId(state, 'nextRiverId', 'river_');
+  }
+  return id;
+}
 
 export function updateRiverTool(state: EditorState): void {
   if (state.activeTool !== 'river') {
@@ -47,14 +56,14 @@ export function updateRiverTool(state: EditorState): void {
   if (!inViewport) return;
 
   // ESC finishes the river.
-  if (isKeyPressed(Key.Escape) && toolState.placing && toolState.points.length >= 2) {
+  if (isKeyPressed(Key.ESCAPE) && toolState.placing && toolState.points.length >= 2) {
     finishRiver(state);
     toolState.placing = false;
     toolState.points = [];
     return;
   }
 
-  if (isMouseButtonPressed(MouseButton.Left)) {
+  if (isMouseButtonPressed(MouseButton.LEFT)) {
     const vw = state.viewportRight - state.viewportLeft;
     const vh = state.viewportBottom - state.viewportTop;
     const ray = mouseToWorldRay(state.camera, mx, my, getScreenWidth(), getScreenHeight(), state.viewportLeft, state.viewportTop, vw, vh);
@@ -78,7 +87,7 @@ export function updateRiverTool(state: EditorState): void {
 
 function finishRiver(state: EditorState): void {
   const river: RiverSpline = {
-    id: 'river_' + riverIdCounter++,
+    id: nextRiverId(state),
     controlPoints: toolState.points.slice(),
     widths: toolState.points.map(() => 2.0),
     depth: 1.0,

@@ -51,7 +51,7 @@ export function updateScaleGizmo(state: EditorState, gizmo: ScaleGizmoState): vo
   const sw = getScreenWidth();
   const sh = getScreenHeight();
 
-  if (!gizmo.dragging && inViewport && isMouseButtonPressed(MouseButton.Left)) {
+  if (!gizmo.dragging && inViewport && isMouseButtonPressed(MouseButton.LEFT)) {
     const ray = mouseToWorldRay(state.camera, mx, my, sw, sh, state.viewportLeft, state.viewportTop, vw, vh);
     const pos = gizmo.anchor;
     const len = GIZMO_LENGTH;
@@ -81,7 +81,7 @@ export function updateScaleGizmo(state: EditorState, gizmo: ScaleGizmoState): vo
   }
 
   if (gizmo.dragging) {
-    if (isMouseButtonDown(MouseButton.Left)) {
+    if (isMouseButtonDown(MouseButton.LEFT)) {
       const delta = (mx - gizmo.dragStartX) * 0.01;
       const startScl = (gizmo.dragStartTransform as TransformData).scale;
       const scl: Vec3Lit = [startScl[0], startScl[1], startScl[2]];

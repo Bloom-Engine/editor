@@ -11,7 +11,7 @@ export function handleSelectClick(state: EditorState): void {
   const mx = getMouseX();
   const my = getMouseY();
   const pickedId = pickEntityAtMouse(state, mx, my);
-  const shift = isKeyDown(Key.LeftShift) || isKeyDown(Key.RightShift);
+  const shift = isKeyDown(Key.LEFT_SHIFT) || isKeyDown(Key.RIGHT_SHIFT);
 
   if (pickedId !== null) {
     if (shift) {

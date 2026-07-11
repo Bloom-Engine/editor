@@ -51,7 +51,7 @@ export function updateRotateGizmo(state: EditorState, gizmo: RotateGizmoState): 
   const sh = getScreenHeight();
 
   // Hit test: approximate each circle as 16 line segments, check ray distance.
-  if (!gizmo.dragging && inViewport && isMouseButtonPressed(MouseButton.Left)) {
+  if (!gizmo.dragging && inViewport && isMouseButtonPressed(MouseButton.LEFT)) {
     const ray = mouseToWorldRay(state.camera, mx, my, sw, sh, state.viewportLeft, state.viewportTop, vw, vh);
     const pos = gizmo.anchor;
     const r = GIZMO_LENGTH;
@@ -83,7 +83,7 @@ export function updateRotateGizmo(state: EditorState, gizmo: RotateGizmoState): 
   }
 
   if (gizmo.dragging) {
-    if (isMouseButtonDown(MouseButton.Left)) {
+    if (isMouseButtonDown(MouseButton.LEFT)) {
       const angle = Math.atan2(my - sh / 2, mx - sw / 2);
       let delta = angle - gizmo.dragStartAngle;
 

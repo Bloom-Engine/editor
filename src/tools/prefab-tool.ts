@@ -92,7 +92,7 @@ export function drawPrefabBreadcrumb(state: EditorState, screenW: number): void 
 export function updatePrefabTool(state: EditorState): void {
   if (!state.editingPrefab) return;
 
-  if (isKeyPressed(Key.Escape)) {
+  if (isKeyPressed(Key.ESCAPE)) {
     exitPrefabMode(state);
   }
 }

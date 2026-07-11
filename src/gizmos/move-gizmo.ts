@@ -88,7 +88,7 @@ export function updateMoveGizmo(state: EditorState, gizmo: MoveGizmoState): void
 
   // ---- hit test gizmo axes -------------------------------------------------
 
-  if (!gizmo.dragging && inViewport && isMouseButtonPressed(MouseButton.Left)) {
+  if (!gizmo.dragging && inViewport && isMouseButtonPressed(MouseButton.LEFT)) {
     const ray = mouseToWorldRay(state.camera, mx, my, sw, sh, state.viewportLeft, state.viewportTop, vw, vh);
     const pos = gizmo.anchor;
 
@@ -119,7 +119,7 @@ export function updateMoveGizmo(state: EditorState, gizmo: MoveGizmoState): void
   // ---- drag in progress ----------------------------------------------------
 
   if (gizmo.dragging) {
-    if (isMouseButtonDown(MouseButton.Left)) {
+    if (isMouseButtonDown(MouseButton.LEFT)) {
       const ray = mouseToWorldRay(state.camera, mx, my, sw, sh, state.viewportLeft, state.viewportTop, vw, vh);
       const axis = gizmo.dragAxis;
       const startPos = gizmo.dragStartPos;

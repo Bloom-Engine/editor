@@ -5,7 +5,7 @@
 
 import { isMouseButtonPressed, isMouseButtonDown, isMouseButtonReleased, getMouseX, getMouseY, getScreenWidth, getScreenHeight, MouseButton, drawCube } from 'bloom';
 import { WaterVolume, Vec3Lit, Vec4Lit } from 'bloom/world';
-import { EditorState, Command } from '../state/editor-state';
+import { EditorState, Command, nextCounterId } from '../state/editor-state';
 import { runCommand } from '../state/commands';
 import { mouseToWorldRay, rayPlaneIntersect } from '../viewport/ray';
 
@@ -28,7 +28,16 @@ interface WaterToolState {
 }
 
 const toolState: WaterToolState = { placing: false, startPoint: null };
-let waterIdCounter = 1;
+
+// Ids come from a world-metadata counter (survives restarts), with a guard
+// against collisions with hand-authored ids like arena_02's "river".
+function nextWaterId(state: EditorState): string {
+  let id = nextCounterId(state, 'nextWaterId', 'water_');
+  while (state.world.water.some(w => w.id === id)) {
+    id = nextCounterId(state, 'nextWaterId', 'water_');
+  }
+  return id;
+}
 
 export function updateWaterTool(state: EditorState): void {
   if (state.activeTool !== 'water') {
@@ -48,12 +57,12 @@ export function updateWaterTool(state: EditorState): void {
   const ground = rayPlaneIntersect(ray, [0, 0, 0], [0, 1, 0]);
   if (!ground) return;
 
-  if (isMouseButtonPressed(MouseButton.Left)) {
+  if (isMouseButtonPressed(MouseButton.LEFT)) {
     toolState.placing = true;
     toolState.startPoint = [ground[0], ground[1], ground[2]];
   }
 
-  if (toolState.placing && isMouseButtonReleased(MouseButton.Left) && toolState.startPoint) {
+  if (toolState.placing && isMouseButtonReleased(MouseButton.LEFT) && toolState.startPoint) {
     const sp = toolState.startPoint;
     const cx = (sp[0] + ground[0]) / 2;
     const cz = (sp[2] + ground[2]) / 2;
@@ -61,7 +70,7 @@ export function updateWaterTool(state: EditorState): void {
     const sz = Math.abs(ground[2] - sp[2]);
     if (sx > 0.5 && sz > 0.5) {
       const volume: WaterVolume = {
-        id: 'water_' + waterIdCounter++,
+        id: nextWaterId(state),
         kind: 'box',
         center: [cx, 0, cz],
         size: [sx, 2, sz],

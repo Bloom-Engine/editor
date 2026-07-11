@@ -59,6 +59,38 @@ Everything below was verified by reading current source, not from stale docs. Co
 4. **Environment edits bypass the undo stack** — `environment-panel.ts` mutates `state.world.environment` directly and only sets dirty flags.
 5. **The brush silently creates terrain on flat worlds.** `src/tools/brush-tool.ts:66-68` assigns `defaultTerrain()` when `world.terrain` is null. Both shooter arenas have `terrain: null`; one stray B-keypress + click adds a 128×128 heightmap to a world that shouldn't have one, and the terrain creation itself is not undoable (only the stroke's height deltas are).
 
+### 1.2b Corrections & additional bugs (second audit, 2026-07-11, Windows/Perry 0.5.1208)
+
+Corrections to the audit above, verified against the actual files:
+
+- `arena_02` has **1** water volume (id `river`, a box volume standing in for the river), not 6; `rivers[]` is empty.
+- `enemy_spawner` entities carry only `userData.kind` — there are no `enemyType`/`waveBits`/`maxAlive`/`cooldown` keys (§1.5 overstates); the whole wave plan lives in `wave_config.userData.waves`. F1 stands, its acceptance example doesn't.
+- `loadRecentProjects` is not dead code (called from `addRecentProject`); the missing piece is UI that reads the list.
+- Autosave/Ctrl+S live in `main.ts`, not `world-io.ts`.
+
+Additional bugs found (fixed in the same pass as B1-B4):
+
+6. **Environment sky & fog edits were silent no-ops** — `syncEnvironment` never applied `skyColor`/`fogStart`/`fogEnd`. Fixed: clear color reads the world's sky each frame; fog maps to `setFog` with a density approximation.
+7. **Directional light accumulated** — `addDirectionalLight` per env sync stacked lights. Fixed: `setDirectionalLight` re-applied every frame (begin_frame resets the lighting block anyway — same reason the shooter re-sets sun/ambient per frame).
+8. **Water/river id counters reset per launch** → duplicate ids on reopened worlds made `AddWaterCommand.undo` remove the wrong volume. Fixed: counters persist in `world.metadata` (like `nextEntityId`) with a collision guard.
+9. **Backspace deleted the selected entity** — latent footgun for text fields. Fixed: Delete only, and only while no widget is active.
+10. **Entity with both modelRef and prefabRef double-bound and leaked a node.** Fixed: prefab branch takes precedence, single bind.
+11. **Entity tints rendered near-black in the editor** — `sync.ts` passed 0-1 world tints straight into `setSceneNodeColor`, which expects 0-255 (see `applyTint` in the engine loader). Fixed.
+
+✅ **Why the editor never started on Windows: it was written against an engine API that doesn't exist.** Three separate mismatches, each producing the same `TypeError: Expected number for native f64 parameter` on the first frame — an `undefined` reaching a native `f64` parameter:
+
+1. **Key constants.** The editor used `Key.LeftControl` / `LeftSuper` / `Escape` / `Delete` / `Space` / `LeftShift` / `RightShift`; the engine (`engine/src/core/keys.ts`) spells them `LEFT_CONTROL`, `LEFT_SUPER`, `ESCAPE`, `DELETE`, `SPACE`, `LEFT_SHIFT`, `RIGHT_SHIFT`. Letters (`Key.Z`) were correct, which hid the pattern.
+2. **Mouse buttons.** `MouseButton.Left/Right/Middle` → engine has `LEFT/RIGHT/MIDDLE`.
+3. **`drawLine` arity.** `widgets.ts:separator()` called `drawLine(x1,y1,x2,y2, 1, color.r, color.g, color.b, color.a)`, but the engine signature is `(x1, y1, x2, y2, thickness, Color)` — so it read `.r` off the number `1` and got `undefined`. This one only fires on the first panel that draws a separator, which is why it surfaced last.
+
+4. **`setSceneNodeTransform` / `updateSceneNodeGeometry` were unreachable from TypeScript.** Both take their arrays through `i64` pointer params, and Perry 0.5.x refuses to pass a `number[]` into an `i64` ("Expected safe integer for native i64 parameter"). The engine had already worked around this for meshes (the `bloom_mesh_scratch_*` buffers) but never migrated the scene-graph pair — the shooter uses `setSceneNodeTrs` (all-scalar) so nobody hit it, while the editor needs full matrices (non-uniform scale: a boundary wall is 40×4×0.5). **Fixed in the engine** (additive, nothing else changes): new `bloom_scene_set_transform16` (17 scalars, stateless) and `bloom_scene_update_geometry_scratch` (re-uses the mesh scratch); the TS wrappers now route through them, and the stale "prefer setSceneNodeTrs until the scratch migration lands" note in `engine/src/scene/index.ts` is now true history.
+
+All fixed. Perry does not type-check missing members on these `const` objects, so none of this failed at compile time. **Perry's reported stack line was flat wrong** (it blamed `sync.ts:383` for a fault in `main.ts`'s input block) — trust `console.error` breadcrumbs, not the line attribution. An engine-API audit of the remaining call sites (`drawRay`/`drawCube`/`drawText`/scene calls) found no further mismatches.
+
+⚠️ **Separately: Perry 0.5.1208 miscompiles `Map` fields on an interface** — a real bug, found while chasing the above, though it was *not* what broke the editor. Reading `.size` on a `Map` field of an interface access-violates once the program declares more than one such field; `Set.size` and class fields are fine. `AssetCatalog` and `HandleMap` are now classes as a precaution, and no code reads `Map.size` through a property chain. Full repro table + rules: **`docs/perry-map-size-av.md`** — read it before adding a `Map` to editor state, and report upstream.
+
+Traps recorded so nobody re-pays for them: Perry's **stdout is block-buffered and lost on a native crash** (use `console.error`); a debug line printing `someMap.size` *introduces* an access violation of its own (the instrumentation became the bug for hours); and `loadAssetCatalog` takes ~20 s here for the shooter's 26 GLBs (the "&lt;1 s" comment in that file is macOS-calibrated) — the black window at startup is loading, not a hang. Async/lazy catalog loading deserves a follow-up.
+
 ### 1.3 Dead code — written but unreachable (all verified by grep: zero call sites)
 
 | Code | What's missing to reach it |
