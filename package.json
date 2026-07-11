@@ -4,5 +4,15 @@
   "main": "src/main.ts",
   "dependencies": {
     "bloom": "file:../engine/"
+  },
+  "perry": {
+    "allow": {
+      "nativeLibrary": [
+        "bloom",
+        "bloom/core",
+        "bloom/world",
+        "bloom/scene"
+      ]
+    }
   }
 }

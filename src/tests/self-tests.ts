@@ -1,14 +1,17 @@
-// Self-tests — run via bloom-editor --test (check for arg in main.ts).
-// Prints PASS/FAIL for each test, exits with nonzero on any failure.
+// Self-tests — run via `bloom-editor --test` (wired in main.ts, which exits
+// nonzero on any failure). Prints each failing assertion by name plus a
+// pass/fail summary; runSelfTests returns the failure count.
 
 import { WorldData, PrefabData, createEmptyWorld, createEntity } from 'bloom/world';
 import { validateWorld, validatePrefab } from 'bloom/world';
 import { buildHeightmapMesh, sampleHeight, defaultTerrain } from 'bloom/world';
 import { expandPrefab, createPrefabRegistry, registerPrefab, PrefabLeaf } from 'bloom/world';
-import { createEditorState } from '../state/editor-state';
+import { createEditorState, nextCounterId } from '../state/editor-state';
 import { runCommand, undo, redo } from '../state/commands';
 import { CreateEntityCommand } from '../state/commands/create-entity';
 import { TransformEntityCommand } from '../state/commands/transform-entity';
+import { CreateTerrainCommand } from '../state/commands/create-terrain';
+import { SetUserDataCommand } from '../state/commands/set-userdata';
 
 let passed = 0;
 let failed = 0;
@@ -18,17 +21,26 @@ function assert(condition: boolean, name: string): void {
     passed++;
   } else {
     failed++;
+    console.log('FAIL: ' + name);
   }
 }
 
 export function runSelfTests(): number {
+  passed = 0;
+  failed = 0;
+
   testWorldRoundTrip();
   testValidation();
   testTerrainBilinearSample();
   testPrefabCycleDetection();
   testPrefabExpansion();
   testCommandUndoRedo();
+  testMapSize();
+  testCreateTerrainUndo();
+  testCounterIds();
+  testUserDataCommand();
 
+  console.log('self-tests: ' + passed + ' passed, ' + failed + ' failed');
   return failed;
 }
 
@@ -122,6 +134,66 @@ function testPrefabExpansion(): void {
   assert(leaves.length === 3, 'expand: 3 leaves');
   assert(leaves[0].modelRef === 'wall.glb', 'expand: first leaf is wall');
   assert(leaves[2].modelRef === 'roof.glb', 'expand: third leaf is roof');
+}
+
+function testMapSize(): void {
+  // Regression probe: Map.size at editor startup coincided with a native
+  // access violation (0xc0000005) on Perry 0.5.1208 — keep this canary.
+  const m = new Map<string, number>();
+  assert(m.size === 0, 'map: empty size');
+  m.set('a', 1);
+  m.set('b', 2);
+  assert(m.size === 2, 'map: size after set');
+  m.delete('a');
+  assert(m.size === 1, 'map: size after delete');
+  // The editor AV'd specifically on string + Map.size concatenation.
+  const viaLocal = m.size;
+  assert(('n=' + viaLocal) === 'n=1', 'map: size concat via local');
+  assert(('n=' + m.size) === 'n=1', 'map: size concat direct');
+  console.log('map-size concat survived: n=' + m.size);
+}
+
+function testCreateTerrainUndo(): void {
+  const state = createEditorState();
+  assert(state.world.terrain === null, 'terrain cmd: starts null');
+
+  runCommand(state, new CreateTerrainCommand());
+  assert(state.world.terrain !== null, 'terrain cmd: created');
+
+  undo(state);
+  assert(state.world.terrain === null, 'terrain cmd: undo returns terrain to null');
+
+  redo(state);
+  assert(state.world.terrain !== null, 'terrain cmd: redo re-creates');
+}
+
+function testCounterIds(): void {
+  const state = createEditorState();
+  const a = nextCounterId(state, 'nextWaterId', 'water_');
+  const b = nextCounterId(state, 'nextWaterId', 'water_');
+  assert(a === 'water_1', 'counter: first id');
+  assert(b === 'water_2', 'counter: second id');
+  assert(state.world.metadata['nextWaterId'] === '3', 'counter: persists in world metadata');
+}
+
+function testUserDataCommand(): void {
+  const state = createEditorState();
+  runCommand(state, new CreateEntityCommand(createEntity('ud_ent', 'x.glb', [0, 0, 0])));
+
+  runCommand(state, new SetUserDataCommand('ud_ent', 'cooldown', null, '5'));
+  assert(state.world.entities[0].userData['cooldown'] === '5', 'userdata: set');
+
+  runCommand(state, new SetUserDataCommand('ud_ent', 'cooldown', '5', '8'));
+  assert(state.world.entities[0].userData['cooldown'] === '8', 'userdata: edit');
+
+  undo(state);
+  assert(state.world.entities[0].userData['cooldown'] === '5', 'userdata: undo restores previous value');
+
+  runCommand(state, new SetUserDataCommand('ud_ent', 'cooldown', '5', null));
+  assert(state.world.entities[0].userData['cooldown'] === undefined, 'userdata: remove');
+
+  undo(state);
+  assert(state.world.entities[0].userData['cooldown'] === '5', 'userdata: undo restores removed key');
 }
 
 function testCommandUndoRedo(): void {

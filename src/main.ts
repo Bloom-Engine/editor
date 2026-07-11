@@ -55,6 +55,20 @@ import { drawAssetPanel } from './ui/layouts/asset-panel';
 import { drawInspector } from './ui/layouts/inspector';
 import { drawOutliner } from './ui/layouts/outliner';
 import { drawStatusBar } from './ui/layouts/status-bar';
+import { runSelfTests } from './tests/self-tests';
+
+// ---- self-tests (headless) ---------------------------------------------------
+
+// `bloom-editor --test` runs the suite without opening a window and exits
+// nonzero on any failure, so CI and pre-commit hooks can gate on it.
+let selfTestMode = false;
+for (let i = 0; i < process.argv.length; i++) {
+  if (process.argv[i] === '--test') selfTestMode = true;
+}
+if (selfTestMode) {
+  const failures = runSelfTests();
+  process.exit(failures > 0 ? 1 : 0);
+}
 
 // ---- init ------------------------------------------------------------------
 
@@ -73,6 +87,8 @@ const scaleGizmo = createScaleGizmoState();
 
 // Load project + assets.
 loadProject(state);
+// Blocking: loads every GLB in the project's models dir (~20 s for the
+// shooter's 26 on a mid Windows box). Worth making async — see PLAN.md.
 loadAssetCatalog(state);
 
 // Open default world if available.
@@ -80,6 +96,9 @@ if (state.project && state.project.defaultWorld.length > 0) {
   const worldPath = state.project.worldsDir + '/' + state.project.defaultWorld;
   openWorld(state, worldPath);
   addRecentProject(state.project.name, state.project.filePath);
+  // Start looking at the level rather than at the default orbit target, which
+  // on arena_02 puts the camera inside the building.
+  frameCameraOnWorld(state);
 }
 
 // Mark environment for initial sync.
@@ -108,14 +127,15 @@ while (!windowShouldClose()) {
   // ---- input shortcuts -----------------------------------------------------
 
   // Ctrl+Z / Ctrl+Y (undo/redo).
-  if (isKeyDown(Key.LeftControl) || isKeyDown(Key.LeftSuper)) {
+  if (isKeyDown(Key.LEFT_CONTROL) || isKeyDown(Key.LEFT_SUPER)) {
     if (isKeyPressed(Key.Z)) undo(state);
     if (isKeyPressed(Key.Y)) redo(state);
     if (isKeyPressed(Key.S)) saveCurrentWorld(state);
   }
 
-  // Delete selected entity.
-  if (isKeyPressed(Key.Delete) || isKeyPressed(Key.Backspace)) {
+  // Delete selected entity. Delete only — Backspace must stay free for text
+  // widgets — and never while a widget (text field, drag) is active.
+  if (isKeyPressed(Key.DELETE) && ui.activeId === null) {
     if (state.selection.primary !== null) {
       const entity = state.world.entities.find(e => e.id === state.selection.primary);
       if (entity) {
@@ -126,7 +146,7 @@ while (!windowShouldClose()) {
   }
 
   // Duplicate (Ctrl+D).
-  if ((isKeyDown(Key.LeftControl) || isKeyDown(Key.LeftSuper)) && isKeyPressed(Key.D)) {
+  if ((isKeyDown(Key.LEFT_CONTROL) || isKeyDown(Key.LEFT_SUPER)) && isKeyPressed(Key.D)) {
     if (state.selection.primary !== null) {
       const entity = state.world.entities.find(e => e.id === state.selection.primary);
       if (entity) {
@@ -135,15 +155,20 @@ while (!windowShouldClose()) {
     }
   }
 
-  // Tool hotkeys.
-  if (isKeyPressed(Key.Q)) state.activeTool = 'select';
-  if (isKeyPressed(Key.W)) state.activeTool = 'place';
-  if (isKeyPressed(Key.G)) { state.activeTool = 'transform'; state.transformMode = 'move'; }
-  if (isKeyPressed(Key.R)) { state.activeTool = 'transform'; state.transformMode = 'rotate'; }
-  if (isKeyPressed(Key.E)) { state.activeTool = 'transform'; state.transformMode = 'scale'; }
-  if (isKeyPressed(Key.B)) state.activeTool = 'brush';
-  if (isKeyPressed(Key.T)) state.activeTool = 'water';
-  if (isKeyPressed(Key.Y)) state.activeTool = 'river';
+  // Tool hotkeys — only when no Ctrl/Cmd chord is held (so Ctrl+Y never
+  // doubles as a tool switch) and no widget is active (so typing "q" into a
+  // text field doesn't switch tools).
+  const chordHeld = isKeyDown(Key.LEFT_CONTROL) || isKeyDown(Key.LEFT_SUPER);
+  if (!chordHeld && ui.activeId === null) {
+    if (isKeyPressed(Key.Q)) state.activeTool = 'select';
+    if (isKeyPressed(Key.W)) state.activeTool = 'place';
+    if (isKeyPressed(Key.G)) { state.activeTool = 'transform'; state.transformMode = 'move'; }
+    if (isKeyPressed(Key.R)) { state.activeTool = 'transform'; state.transformMode = 'rotate'; }
+    if (isKeyPressed(Key.E)) { state.activeTool = 'transform'; state.transformMode = 'scale'; }
+    if (isKeyPressed(Key.B)) state.activeTool = 'brush';
+    if (isKeyPressed(Key.T)) state.activeTool = 'water';
+    if (isKeyPressed(Key.Y)) state.activeTool = 'river';
+  }
 
   // F key: frame camera on selection (or world bounds if nothing selected).
   if (isKeyPressed(Key.F)) {
@@ -155,7 +180,7 @@ while (!windowShouldClose()) {
   }
 
   // Escape: deselect.
-  if (isKeyPressed(Key.Escape)) {
+  if (isKeyPressed(Key.ESCAPE)) {
     state.selection.ids.clear();
     state.selection.primary = null;
     syncSelectionOutline(state);
@@ -176,7 +201,15 @@ while (!windowShouldClose()) {
   // ---- begin drawing -------------------------------------------------------
 
   beginDrawing();
-  clearBackground({ r: 42, g: 46, b: 56, a: 255 });
+  // Clear to the world's sky color so the environment panel's sky edits are
+  // actually visible (the panel used to be a silent no-op here).
+  const envSky = state.world.environment.skyColor;
+  clearBackground({
+    r: Math.floor(envSky[0] * 255),
+    g: Math.floor(envSky[1] * 255),
+    b: Math.floor(envSky[2] * 255),
+    a: 255,
+  });
 
   // ---- 3D viewport ---------------------------------------------------------
 
@@ -217,7 +250,7 @@ while (!windowShouldClose()) {
 
   // We draw UI panels next and check mouseCaptured afterwards. To avoid
   // a one-frame delay, we store the click intent here and process it after UI.
-  const viewportClicked = inViewport && isMouseButtonPressed(MouseButton.Left);
+  const viewportClicked = inViewport && isMouseButtonPressed(MouseButton.LEFT);
 
   // ---- 2D UI (drawn on top of the viewport) --------------------------------
 
