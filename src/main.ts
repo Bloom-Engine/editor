@@ -45,6 +45,7 @@ import { createScaleGizmoState, updateScaleGizmo, drawScaleGizmo } from './gizmo
 import { updateBrushTool } from './tools/brush-tool';
 import { updateWaterTool, drawWaterVolumes } from './tools/water-tool';
 import { updateRiverTool, drawRiverSplines } from './tools/river-tool';
+import { updateLightTool, drawLightMarkers, RemoveLightCommand } from './tools/light-tool';
 import { updatePrefabTool, drawPrefabBreadcrumb } from './tools/prefab-tool';
 import { drawEnvironmentPanel } from './ui/layouts/environment-panel';
 import { drawBrushPanel } from './ui/layouts/brush-panel';
@@ -150,6 +151,9 @@ while (!windowShouldClose()) {
     } else if (state.selection.kind === 'river') {
       const idx = state.world.rivers.findIndex(r => r.id === state.selection.primary);
       if (idx >= 0) runCommand(state, new RemoveRiverCommand(state.world.rivers[idx], idx));
+    } else if (state.selection.kind === 'light') {
+      const idx = state.world.lights.findIndex(l => l.id === state.selection.primary);
+      if (idx >= 0) runCommand(state, new RemoveLightCommand(state.world.lights[idx], idx));
     }
   }
 
@@ -236,9 +240,11 @@ while (!windowShouldClose()) {
   drawRotateGizmo(rotateGizmo);
   drawScaleGizmo(scaleGizmo);
 
-  // Draw water volumes and river splines as immediate-mode overlays.
+  // In-progress previews for the water/river tools, plus light markers (a light
+  // has no mesh, so without these you cannot see or click one).
   drawWaterVolumes(state);
   drawRiverSplines(state);
+  drawLightMarkers(state);
 
   // Note: scene graph nodes are drawn automatically by the engine's retained-
   // mode renderer. We don't need to call drawModel for scene-graph entities.
@@ -299,6 +305,7 @@ while (!windowShouldClose()) {
   updateBrushTool(state);
   updateWaterTool(state);
   updateRiverTool(state);
+  updateLightTool(state);
 
   // ---- world sync (at the end of the frame) --------------------------------
 

@@ -4,6 +4,7 @@
 
 import { WorldData, PrefabData, WaterVolume, createEmptyWorld, createEntity } from 'bloom/world';
 import { validateWorld, validatePrefab } from 'bloom/world';
+import { migrateWorldData } from 'bloom/world';
 import { buildHeightmapMesh, sampleHeight, defaultTerrain } from 'bloom/world';
 import { expandPrefab, createPrefabRegistry, registerPrefab, PrefabLeaf } from 'bloom/world';
 import {
@@ -44,6 +45,7 @@ export function runSelfTests(): number {
   testCounterIds();
   testUserDataCommand();
   testWaterCommands();
+  testLightMigration();
 
   console.log('self-tests: ' + passed + ' passed, ' + failed + ' failed');
   return failed;
@@ -242,6 +244,56 @@ function testWaterCommands(): void {
   assert(selectedEntityId(state) === null, 'selection: a river is not an entity selection');
   selectEntity(state, 'ent_1');
   assert(selectedEntityId(state) === 'ent_1', 'selection: entity selection reads back');
+}
+
+// Schema v1 carried point lights as entities with userData.kind='point_light'.
+// migrateWorldData must lift them into world.lights and drop them from
+// entities, without touching anything else — this runs on every load of an old
+// world, so a bug here silently mangles worlds.
+function testLightMigration(): void {
+  const world = createEmptyWorld('t', 'T') as any;
+  world.schemaVersion = 1;
+  world.lights = undefined;
+
+  const lightEnt = createEntity('light_a', '', [3, 4, 5]);
+  lightEnt.userData = {
+    kind: 'point_light',
+    range: '18',
+    color: '1.0, 0.5, 0.25',
+    intensity: '2.5',
+  };
+  const propEnt = createEntity('prop_a', 'models/crate.glb', [1, 0, 1]);
+
+  world.entities.push(lightEnt);
+  world.entities.push(propEnt);
+
+  const migrated = migrateWorldData(world as WorldData);
+
+  assert(migrated.schemaVersion === 2, 'migration: schemaVersion bumped to 2');
+  assert(migrated.lights.length === 1, 'migration: one light lifted');
+  assert(migrated.entities.length === 1, 'migration: light removed from entities');
+  assert(migrated.entities[0].id === 'prop_a', 'migration: non-light entity untouched');
+
+  const l = migrated.lights[0];
+  assert(l.id === 'light_a', 'migration: light id preserved');
+  assert(l.kind === 'point', 'migration: light kind');
+  assert(l.position[0] === 3 && l.position[1] === 4 && l.position[2] === 5, 'migration: position carried over');
+  assert(l.range === 18, 'migration: range parsed from userData');
+  assert(l.intensity === 2.5, 'migration: intensity parsed from userData');
+  assert(Math.abs(l.color[0] - 1.0) < 0.001 && Math.abs(l.color[1] - 0.5) < 0.001,
+    'migration: color parsed from "r, g, b" string');
+
+  // A v2 world must pass through untouched (migration is not re-run).
+  const already = createEmptyWorld('t2', 'T2');
+  already.lights.push({
+    id: 'l1', name: 'l1', kind: 'point',
+    position: [0, 1, 0], color: [1, 1, 1], intensity: 1, range: 5,
+  });
+  const again = migrateWorldData(already);
+  assert(again.lights.length === 1, 'migration: v2 world is left alone');
+
+  const v = validateWorld(again);
+  assert(v.ok === true, 'migration: migrated world validates');
 }
 
 function testCommandUndoRedo(): void {

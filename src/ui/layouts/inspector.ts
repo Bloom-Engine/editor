@@ -18,6 +18,7 @@ import { SetUserDataCommand } from '../../state/commands/set-userdata';
 import {
   EditWaterCommand, EditRiverCommand, RemoveWaterCommand, RemoveRiverCommand,
 } from '../../state/commands/edit-water';
+import { EditLightCommand, RemoveLightCommand, cloneLight } from '../../tools/light-tool';
 import { runCommand } from '../../state/commands';
 import { Vec3Lit, TransformData, EntityData, WaterVolume, RiverSpline } from 'bloom/world';
 
@@ -39,6 +40,10 @@ export function drawInspector(ui: UiContext, state: EditorState): void {
   }
   if (state.selection.kind === 'river' && state.selection.primary !== null) {
     drawRiverInspector(ui, state, px, screenH, pw);
+    return;
+  }
+  if (state.selection.kind === 'light' && state.selection.primary !== null) {
+    drawLightInspector(ui, state, px, screenH, pw);
     return;
   }
 
@@ -310,6 +315,67 @@ function drawRiverInspector(
   separator(ui);
   if (button(ui, 'riv_delete', 'Delete river')) {
     runCommand(state, new RemoveRiverCommand(state.world.rivers[idx], idx));
+  }
+
+  endPanel(ui);
+}
+
+// ---- light inspector ---------------------------------------------------------
+
+function drawLightInspector(
+  ui: UiContext, state: EditorState,
+  px: number, screenH: number, pw: number,
+): void {
+  const panelH = 300;
+  const py = screenH - Theme.statusBarHeight - panelH;
+  beginPanel(ui, 'inspector', px, py, pw, panelH, 'Light');
+
+  const idx = state.world.lights.findIndex(l => l.id === state.selection.primary);
+  if (idx < 0) {
+    labelSmall(ui, 'Light not found');
+    endPanel(ui);
+    return;
+  }
+
+  const l = state.world.lights[idx];
+  const before = cloneLight(l);
+  let changed = false;
+
+  label(ui, l.name);
+  labelSmall(ui, l.id);
+  separator(ui);
+
+  const posRef: Ref<Vec3Lit> = { value: [l.position[0], l.position[1], l.position[2]] };
+  if (vec3Field(ui, 'lit_pos', 'Position', posRef)) {
+    l.position = posRef.value;
+    changed = true;
+  }
+
+  const colorRef: Ref<Vec3Lit> = { value: [l.color[0], l.color[1], l.color[2]] };
+  if (vec3Field(ui, 'lit_col', 'Color RGB', colorRef)) {
+    l.color = [clamp01(colorRef.value[0]), clamp01(colorRef.value[1]), clamp01(colorRef.value[2])];
+    changed = true;
+  }
+
+  const intRef: Ref<number> = { value: l.intensity };
+  if (dragFloat(ui, 'lit_int', 'Intensity', intRef, 0.02, 0, 20)) {
+    l.intensity = intRef.value;
+    changed = true;
+  }
+
+  const rangeRef: Ref<number> = { value: l.range };
+  if (dragFloat(ui, 'lit_range', 'Range', rangeRef, 0.1, 0.1, 200)) {
+    l.range = rangeRef.value;
+    changed = true;
+  }
+
+  if (changed) {
+    runCommand(state, new EditLightCommand(l.id, before, l));
+  }
+
+  separator(ui);
+  if (button(ui, 'lit_delete', 'Delete light')) {
+    runCommand(state, new RemoveLightCommand(state.world.lights[idx], idx));
   }
 
   endPanel(ui);

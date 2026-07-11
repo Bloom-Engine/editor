@@ -7,7 +7,7 @@ import { UiContext } from '../ui-context';
 import { beginPanel, endPanel, labelSmall, listRow } from '../widgets';
 import { Theme } from '../theme';
 import {
-  EditorState, selectEntity, selectWater, selectRiver,
+  EditorState, selectEntity, selectWater, selectRiver, selectLight,
 } from '../../state/editor-state';
 import { syncSelectionOutline } from '../../viewport/picking';
 
@@ -22,8 +22,9 @@ export function drawOutliner(ui: UiContext, state: EditorState): void {
   const entities = state.world.entities;
   const water = state.world.water;
   const rivers = state.world.rivers;
+  const lights = state.world.lights;
 
-  if (entities.length === 0 && water.length === 0 && rivers.length === 0) {
+  if (entities.length === 0 && water.length === 0 && rivers.length === 0 && lights.length === 0) {
     labelSmall(ui, 'Empty world');
     endPanel(ui);
     state.viewportLeft = pw;
@@ -57,7 +58,19 @@ export function drawOutliner(ui: UiContext, state: EditorState): void {
     }
   }
 
-  if (water.length > 0 || rivers.length > 0) {
+  if (lights.length > 0) {
+    labelSmall(ui, 'Lights');
+    for (let i = 0; i < lights.length; i++) {
+      const l = lights[i];
+      const selected = state.selection.kind === 'light' && state.selection.primary === l.id;
+      if (listRow(ui, 'out_light_' + i, l.name, selected, 1)) {
+        selectLight(state, l.id);
+        syncSelectionOutline(state);
+      }
+    }
+  }
+
+  if (water.length > 0 || rivers.length > 0 || lights.length > 0) {
     labelSmall(ui, 'Entities');
   }
 

@@ -26,7 +26,7 @@ import { setFog } from 'bloom/core';
 import { trsToMat4 } from 'bloom/world';
 import { buildHeightmapMesh } from 'bloom/world';
 import { expandPrefab, PrefabLeaf, createPrefabRegistry, registerPrefab, PrefabRegistry } from 'bloom/world';
-import { spawnWaterVolume, spawnRiver } from 'bloom/world';
+import { spawnWaterVolume, spawnRiver, applyWorldLights } from 'bloom/world';
 import { EntityData, Vec3Lit, Mat4Lit } from 'bloom/world';
 import {
   EditorState, bindEntity, unbindEntity, handleOfEntity,
@@ -368,6 +368,11 @@ function syncEnvironment(state: EditorState): void {
     },
     env.sunIntensity,
   );
+
+  // The world's point lights, re-submitted for the same reason as the sun: the
+  // renderer clears its lighting block every frame. This is what lets the editor
+  // preview a world's lighting rather than guessing at it.
+  applyWorldLights(state.world);
 
   // The engine's fog is exponential height fog while the schema stores a
   // linear start/end pair — approximate with a density that reaches ~95%

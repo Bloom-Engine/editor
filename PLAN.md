@@ -185,6 +185,19 @@ Still open from C: dragging a **gizmo** on a water volume (move/scale writes `ce
 - **C4. Inspector sections**: water (`surfaceHeight`, color, `waveAmplitude`, `waveSpeed`) and river (`depth`, `flowSpeed`, color, per-point width), editable, undoable (coalesced drag commands like `TransformEntityCommand`).
 - **C5. Toolbar buttons** for water and river next to the existing four (`toolbar.ts:46-51`), plus creation-defaults fields (e.g. in the brush-panel pattern) so new volumes/splines aren't hardcoded.
 
+### Schema v2 — first-class point lights — ✅ DONE (2026-07-11)
+
+Not in the original plan; added because the editor could not light its own preview.
+
+In v1, a light was an *entity* carrying `userData.kind = "point_light"` plus `range` / `color` / `intensity` strings — a private convention between one game and its baker. The editor saw an entity with no model (an invisible, unlit marker), and every new game would have re-invented the same convention. Sun, ambient, and fog were already first-class in `environment`; point lights now sit beside them in a top-level `lights: LightData[]`.
+
+The dividing line, for future schema questions: **lights are engine-universal — every renderer knows what a point light is — so they are schema. A spawner or a wave plan means nothing without the game, so it stays `userData`.** The editor stays game-agnostic either way.
+
+- `WORLD_SCHEMA_VERSION = 2`; `migrateWorldData` lifts v1 `point_light` entities into `world.lights` on load, so old worlds keep working untouched. Covered by self-tests (id/position/colour/range/intensity carried over, non-light entities untouched, v2 worlds left alone, result validates).
+- `applyWorldLights(world)` in `world/render.ts` must be called **every frame** — the renderer clears its lighting block in `begin_frame`, the same reason games re-apply sun and ambient. Calling it once at load lights the world for exactly one frame.
+- Editor: Light tool (click to place), Lights section in the outliner, inspector (position / colour / intensity / range), delete with index-preserving undo, and a wire marker at each light plus a range sphere when selected — a light has no mesh, so without markers you cannot see or click one.
+- Shooter: `arena_02` migrated to v2 (5 lights lifted out of `entities`); its baker reads `world.lights` and still falls back to the v1 entity form. **The generated runtime data is byte-identical apart from one comment** — the migration is semantically a no-op for the game.
+
 ### D. Terrain paint & layers
 
 - **D1. UI:** layer list in the brush panel — add/remove `TerrainLayer` (pick `textureRef` via the asset catalog; ⚠ the catalog currently only scans models/prefabs — extend it to a textures dir, adding a `texturesDir` key to `editor.project.json` with a sensible default), set `tileScale`, select active layer (`state.brush.activeLayerIdx` already exists), and expose the `'paint'` kind button (`brush-panel.ts:22`).

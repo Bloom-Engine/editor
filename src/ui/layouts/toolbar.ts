@@ -50,6 +50,7 @@ export function drawToolbar(ui: UiContext, state: EditorState): void {
     ['brush', 'Brush'],
     ['water', 'Water'],
     ['river', 'River'],
+    ['light', 'Light'],
   ];
   for (let i = 0; i < tools.length; i++) {
     const [tid, lbl] = tools[i];

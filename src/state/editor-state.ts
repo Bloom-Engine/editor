@@ -11,7 +11,7 @@ import {
 // ---- sub-state types -------------------------------------------------------
 
 export type EntityId = string;
-export type ToolId = 'select' | 'place' | 'transform' | 'brush' | 'prefab' | 'water' | 'river';
+export type ToolId = 'select' | 'place' | 'transform' | 'brush' | 'prefab' | 'water' | 'river' | 'light';
 export type TransformMode = 'move' | 'rotate' | 'scale';
 
 export interface Project {
@@ -67,7 +67,7 @@ export class AssetCatalog {
 // rivers are stored in separate arrays in the world file and are not
 // interchangeable, so the selection has to say which array `primary` indexes
 // into — an id alone is ambiguous.
-export type SelectionKind = 'entity' | 'water' | 'river';
+export type SelectionKind = 'entity' | 'water' | 'river' | 'light';
 
 export interface Selection {
   ids: Set<EntityId>;                 // Multi-select; entities only.
@@ -255,6 +255,12 @@ export function selectRiver(state: EditorState, id: string): void {
   state.selection.ids.clear();
   state.selection.primary = id;
   state.selection.kind = 'river';
+}
+
+export function selectLight(state: EditorState, id: string): void {
+  state.selection.ids.clear();
+  state.selection.primary = id;
+  state.selection.kind = 'light';
 }
 
 // ---- handle map helpers ----------------------------------------------------
