@@ -1,0 +1,7 @@
+node_modules/
+dist/
+/main
+/bloom-editor
+.DS_Store
+*.log
+.claude/
