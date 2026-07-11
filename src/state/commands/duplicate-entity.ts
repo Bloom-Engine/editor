@@ -42,6 +42,7 @@ export class DuplicateEntityCommand implements Command {
     state.selection.ids.clear();
     state.selection.ids.add(this.clone.id);
     state.selection.primary = this.clone.id;
+    state.selection.kind = 'entity';
   }
 
   undo(state: EditorState): void {

@@ -6,14 +6,20 @@
 
 import { getScreenWidth, getScreenHeight, drawText } from 'bloom';
 import { UiContext } from '../ui-context';
-import { beginPanel, endPanel, label, labelSmall, separator, vec3Field, toolButton, Ref } from '../widgets';
+import {
+  beginPanel, endPanel, label, labelSmall, separator, vec3Field, dragFloat,
+  toolButton, button, Ref,
+} from '../widgets';
 import { textInput } from '../text-input';
 import { Theme } from '../theme';
-import { EditorState } from '../../state/editor-state';
+import { EditorState, selectedEntityId } from '../../state/editor-state';
 import { TransformEntityCommand } from '../../state/commands/transform-entity';
 import { SetUserDataCommand } from '../../state/commands/set-userdata';
+import {
+  EditWaterCommand, EditRiverCommand, RemoveWaterCommand, RemoveRiverCommand,
+} from '../../state/commands/edit-water';
 import { runCommand } from '../../state/commands';
-import { Vec3Lit, TransformData, EntityData } from 'bloom/world';
+import { Vec3Lit, TransformData, EntityData, WaterVolume, RiverSpline } from 'bloom/world';
 
 // Add-row scratch state — survives across frames until '+' commits it.
 const newKeyRef: Ref<string> = { value: '' };
@@ -25,8 +31,19 @@ export function drawInspector(ui: UiContext, state: EditorState): void {
   const pw = Theme.assetPanelWidth;
   const px = screenW - pw;
 
-  const entity = state.selection.primary !== null
-    ? state.world.entities.find(e => e.id === state.selection.primary)
+  // Water and rivers get their own property panels — they are not entities and
+  // have no transform, model, tags, or userData.
+  if (state.selection.kind === 'water' && state.selection.primary !== null) {
+    drawWaterInspector(ui, state, px, screenH, pw);
+    return;
+  }
+  if (state.selection.kind === 'river' && state.selection.primary !== null) {
+    drawRiverInspector(ui, state, px, screenH, pw);
+    return;
+  }
+
+  const entity = selectedEntityId(state) !== null
+    ? state.world.entities.find(e => e.id === selectedEntityId(state))
     : undefined;
 
   // Panel grows upward with the userData row count (no scrolling yet).
@@ -138,4 +155,187 @@ function cloneTransform(t: TransformData): TransformData {
     rotation: [t.rotation[0], t.rotation[1], t.rotation[2]],
     scale: [t.scale[0], t.scale[1], t.scale[2]],
   };
+}
+
+// ---- water inspector ---------------------------------------------------------
+
+function cloneWater(w: WaterVolume): WaterVolume {
+  return {
+    id: w.id, kind: w.kind,
+    center: [w.center[0], w.center[1], w.center[2]],
+    size: [w.size[0], w.size[1], w.size[2]],
+    surfaceHeight: w.surfaceHeight,
+    color: [w.color[0], w.color[1], w.color[2], w.color[3]],
+    waveAmplitude: w.waveAmplitude,
+    waveSpeed: w.waveSpeed,
+  };
+}
+
+function drawWaterInspector(
+  ui: UiContext, state: EditorState,
+  px: number, screenH: number, pw: number,
+): void {
+  const panelH = 330;
+  const py = screenH - Theme.statusBarHeight - panelH;
+  beginPanel(ui, 'inspector', px, py, pw, panelH, 'Water');
+
+  const idx = state.world.water.findIndex(w => w.id === state.selection.primary);
+  if (idx < 0) {
+    labelSmall(ui, 'Water volume not found');
+    endPanel(ui);
+    return;
+  }
+
+  const w = state.world.water[idx];
+  const before = cloneWater(w);
+  let changed = false;
+
+  label(ui, w.id);
+  separator(ui);
+
+  const centerRef: Ref<Vec3Lit> = { value: [w.center[0], w.center[1], w.center[2]] };
+  if (vec3Field(ui, 'wat_center', 'Center', centerRef)) {
+    w.center = centerRef.value;
+    changed = true;
+  }
+
+  const sizeRef: Ref<Vec3Lit> = { value: [w.size[0], w.size[1], w.size[2]] };
+  if (vec3Field(ui, 'wat_size', 'Size', sizeRef)) {
+    w.size = sizeRef.value;
+    changed = true;
+  }
+
+  const surfRef: Ref<number> = { value: w.surfaceHeight };
+  if (dragFloat(ui, 'wat_surf', 'Surface Y', surfRef, 0.05, -100, 100)) {
+    w.surfaceHeight = surfRef.value;
+    changed = true;
+  }
+
+  const ampRef: Ref<number> = { value: w.waveAmplitude };
+  if (dragFloat(ui, 'wat_amp', 'Wave Amp', ampRef, 0.01, 0, 2)) {
+    w.waveAmplitude = ampRef.value;
+    changed = true;
+  }
+
+  const spdRef: Ref<number> = { value: w.waveSpeed };
+  if (dragFloat(ui, 'wat_spd', 'Wave Spd', spdRef, 0.01, 0, 10)) {
+    w.waveSpeed = spdRef.value;
+    changed = true;
+  }
+
+  separator(ui);
+  changed = drawColorFields(ui, 'wat', w.color) || changed;
+
+  if (changed) {
+    runCommand(state, new EditWaterCommand(w.id, before, w));
+  }
+
+  separator(ui);
+  if (button(ui, 'wat_delete', 'Delete volume')) {
+    runCommand(state, new RemoveWaterCommand(state.world.water[idx], idx));
+  }
+
+  endPanel(ui);
+}
+
+// ---- river inspector ---------------------------------------------------------
+
+function cloneRiver(r: RiverSpline): RiverSpline {
+  const pts: [number, number, number][] = [];
+  for (let i = 0; i < r.controlPoints.length; i++) {
+    const p = r.controlPoints[i];
+    pts.push([p[0], p[1], p[2]]);
+  }
+  return {
+    id: r.id,
+    controlPoints: pts,
+    widths: r.widths.slice(),
+    depth: r.depth,
+    flowSpeed: r.flowSpeed,
+    color: [r.color[0], r.color[1], r.color[2], r.color[3]],
+  };
+}
+
+function drawRiverInspector(
+  ui: UiContext, state: EditorState,
+  px: number, screenH: number, pw: number,
+): void {
+  const panelH = 300;
+  const py = screenH - Theme.statusBarHeight - panelH;
+  beginPanel(ui, 'inspector', px, py, pw, panelH, 'River');
+
+  const idx = state.world.rivers.findIndex(r => r.id === state.selection.primary);
+  if (idx < 0) {
+    labelSmall(ui, 'River not found');
+    endPanel(ui);
+    return;
+  }
+
+  const r = state.world.rivers[idx];
+  const before = cloneRiver(r);
+  let changed = false;
+
+  label(ui, r.id);
+  labelSmall(ui, r.controlPoints.length + ' control points');
+  separator(ui);
+
+  const depthRef: Ref<number> = { value: r.depth };
+  if (dragFloat(ui, 'riv_depth', 'Depth', depthRef, 0.05, 0, 20)) {
+    r.depth = depthRef.value;
+    changed = true;
+  }
+
+  const flowRef: Ref<number> = { value: r.flowSpeed };
+  if (dragFloat(ui, 'riv_flow', 'Flow Spd', flowRef, 0.01, 0, 10)) {
+    r.flowSpeed = flowRef.value;
+    changed = true;
+  }
+
+  // One width for the whole river: per-point widths are in the format, but a
+  // single slider covers the common case without a per-point UI. Editing it
+  // sets every point's width; the file keeps the array.
+  const widthRef: Ref<number> = { value: r.widths.length > 0 ? r.widths[0] : 1 };
+  if (dragFloat(ui, 'riv_width', 'Width', widthRef, 0.05, 0.1, 50)) {
+    for (let i = 0; i < r.widths.length; i++) r.widths[i] = widthRef.value;
+    changed = true;
+  }
+
+  separator(ui);
+  changed = drawColorFields(ui, 'riv', r.color) || changed;
+
+  if (changed) {
+    runCommand(state, new EditRiverCommand(r.id, before, r));
+  }
+
+  separator(ui);
+  if (button(ui, 'riv_delete', 'Delete river')) {
+    runCommand(state, new RemoveRiverCommand(state.world.rivers[idx], idx));
+  }
+
+  endPanel(ui);
+}
+
+// RGBA in 0-1, edited in place. Shared by both panels.
+function drawColorFields(ui: UiContext, idPrefix: string, color: number[]): boolean {
+  let changed = false;
+
+  const rgbRef: Ref<Vec3Lit> = { value: [color[0], color[1], color[2]] };
+  if (vec3Field(ui, idPrefix + '_rgb', 'Color RGB', rgbRef)) {
+    color[0] = clamp01(rgbRef.value[0]);
+    color[1] = clamp01(rgbRef.value[1]);
+    color[2] = clamp01(rgbRef.value[2]);
+    changed = true;
+  }
+
+  const alphaRef: Ref<number> = { value: color[3] };
+  if (dragFloat(ui, idPrefix + '_a', 'Opacity', alphaRef, 0.01, 0, 1)) {
+    color[3] = clamp01(alphaRef.value);
+    changed = true;
+  }
+
+  return changed;
+}
+
+function clamp01(v: number): number {
+  return v < 0 ? 0 : (v > 1 ? 1 : v);
 }

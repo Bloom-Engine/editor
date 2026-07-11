@@ -13,7 +13,7 @@ import {
   updateSceneNodeGeometry,
 } from 'bloom/scene';
 import { mat4Identity, mat4Translate, mat4Scale } from 'bloom';
-import { EditorState, handleOfEntity } from '../state/editor-state';
+import { EditorState, handleOfEntity, selectedEntityId } from '../state/editor-state';
 import { TransformEntityCommand } from '../state/commands/transform-entity';
 import { runCommand } from '../state/commands';
 import { mouseToWorldRay, raySegmentDistance, Ray3 } from '../viewport/ray';
@@ -60,13 +60,13 @@ export function updateMoveGizmo(state: EditorState, gizmo: MoveGizmoState): void
   }
 
   // Position the gizmo at the selected entity.
-  if (state.selection.primary === null || state.activeTool !== 'transform' || state.transformMode !== 'move') {
+  if (selectedEntityId(state) === null || state.activeTool !== 'transform' || state.transformMode !== 'move') {
     gizmo.visible = false;
     gizmo.dragging = false;
     return;
   }
 
-  const entity = state.world.entities.find(e => e.id === state.selection.primary);
+  const entity = state.world.entities.find(e => e.id === selectedEntityId(state));
   if (!entity) {
     gizmo.visible = false;
     gizmo.dragging = false;

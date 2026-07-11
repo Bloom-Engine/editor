@@ -163,7 +163,21 @@ Tasks are grouped, not phased — everything ships. Order within reason: **A →
 - **B3.** Make terrain creation explicit and undoable: replace the silent `defaultTerrain()` in `brush-tool.ts:66-68` with either (a) a "Create terrain" button in the brush panel issuing a `CreateTerrainCommand`, or (b) folding terrain creation into the stroke command's undo state so Ctrl+Z after a first-stroke removes the terrain entirely. Either way, `world.terrain` must return to `null` on undo.
 - **B4.** Cache the prefab registry in `syncRebuilds` (currently rebuilt per entity per frame, `sync.ts:83-87`); invalidate on catalog changes. Remove the dead `label` imports.
 
-### C. Water & rivers, end-to-end
+### C. Water & rivers, end-to-end — ✅ DONE (2026-07-11)
+
+Landed. Notes that differ from the plan as written:
+
+- **`genMeshSplineRibbon` was also unreachable** from TypeScript — same i64-pointer problem as the scene transform (the plan assumed it was ready to use). Added `bloom_gen_mesh_spline_ribbon_scratch`; the wrapper now pushes points then widths through the mesh scratch.
+- Shared helpers live in **`engine/src/world/render.ts`** (`spawnWaterVolume`, `spawnRiver`) and are called by both `instantiateWorld` and the editor's sync layer, so a river cannot look different in-game than in the editor. The 0-1 → 0-255 colour conversion happens there, once. The stale "pending Q8/Q9" warnings are gone.
+- `InstantiateResult` reports `waterHandles` / `riverHandles` as **arrays, not Maps**, index-aligned with `world.water` / `world.rivers` — it already had one `Map`, and a second would have tripped the Perry interface-Map miscompile documented in `docs/perry-map-size-av.md`.
+- Selection is now `{ primary, kind: 'entity' | 'water' | 'river' }`. Entity-only paths (gizmos, entity inspector, duplicate, frame-on-selection, outline) go through `selectedEntityId()`, which returns null for a water/river selection, so a selected river can never be handed to code that assumes `world.entities`.
+- Outliner lists **Water and Rivers above Entities** — the panel does not scroll, and a world with 66 entities would otherwise bury them below the fold permanently.
+- Delete removes the selected water/river (undo restores it at its original index, so ordering round-trips). Edits coalesce per drag like entity transforms.
+- Creation defaults (`WATER_DEFAULTS`, `RIVER_DEFAULTS`) replace the previously hardcoded constants.
+
+Still open from C: dragging a **gizmo** on a water volume (move/scale writes `center`/`size`) and per-control-point river handles. Both are editable numerically in the inspector today.
+
+### C. Water & rivers, end-to-end (original plan)
 
 - **C1. Engine: real spawning in `instantiateWorld`** (`../engine/src/world/loader.ts:152-160`). Create a shared helper module (e.g. `../engine/src/world/render.ts`) with `spawnWaterVolume(v)` — scene node + box mesh sized to `v.size` at `v.center` (top face at `surfaceHeight`), `setSceneNodeWaterMaterial` with `waveAmplitude`/`waveSpeed` and **color converted 0-1 → 0-255** — and `spawnRiver(r)` — sample the Catmull-Rom spline through `controlPoints` (interpolate per-point `widths`), feed `genMeshSplineRibbon`, offset down by `depth`, water material. Replace the two TODO warnings with actual spawns; return handles in the instantiate result. Delete the stale "Q8/Q9" comments. Acceptance: garden (or a test scene) instantiating a world with water/rivers shows them.
 - **C2. Editor: render through the same helpers** in `sync.ts` (new `syncWater`/`syncRivers` driven by pending-flags, mirroring entities), replacing the water tool's translucent debug cubes and the river tool's debug lines. Keep an editor-only selected-highlight overlay.

@@ -2,7 +2,7 @@
 // selected entity fills the viewport. Triggered by pressing F with an entity
 // selected, or automatically after opening a world.
 
-import { EditorState, handleOfEntity } from '../state/editor-state';
+import { EditorState, handleOfEntity, selectedEntityId } from '../state/editor-state';
 import { Vec3Lit } from 'bloom/world';
 
 // Frame the camera on a world-space bounding box. Sets the orbit target to
@@ -34,9 +34,9 @@ export function frameCameraOnBounds(
 
 // Frame the camera on the currently selected entity's model bounds.
 export function frameCameraOnSelection(state: EditorState): void {
-  if (state.selection.primary === null) return;
+  if (selectedEntityId(state) === null) return;
 
-  const entity = state.world.entities.find(e => e.id === state.selection.primary);
+  const entity = state.world.entities.find(e => e.id === selectedEntityId(state));
   if (!entity) return;
 
   // Look up model bounds from the catalog.

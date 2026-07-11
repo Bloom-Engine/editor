@@ -26,6 +26,7 @@ import { setFog } from 'bloom/core';
 import { trsToMat4 } from 'bloom/world';
 import { buildHeightmapMesh } from 'bloom/world';
 import { expandPrefab, PrefabLeaf, createPrefabRegistry, registerPrefab, PrefabRegistry } from 'bloom/world';
+import { spawnWaterVolume, spawnRiver } from 'bloom/world';
 import { EntityData, Vec3Lit, Mat4Lit } from 'bloom/world';
 import {
   EditorState, bindEntity, unbindEntity, handleOfEntity,
@@ -36,7 +37,36 @@ export function syncWorldToScene(state: EditorState): void {
   syncDestroys(state);
   syncRebuilds(state);
   syncTerrain(state);
+  syncWaterAndRivers(state);
   syncEnvironment(state);
+}
+
+// ---- water & rivers ----------------------------------------------------------
+//
+// Rendered through the engine's shared spawn helpers (bloom/world's render.ts),
+// the same ones `instantiateWorld` uses, so what you see here is what the game
+// shows. Tools set `pendingWaterRebuild` after any add/edit/remove; we tear the
+// nodes down and respawn them, which is cheap at authoring-time volumes and
+// avoids a per-property update API for every water knob.
+function syncWaterAndRivers(state: EditorState): void {
+  if (!state.pendingWaterRebuild) return;
+  state.pendingWaterRebuild = false;
+
+  for (let i = 0; i < state.waterHandles.length; i++) {
+    if (state.waterHandles[i] !== 0) destroySceneNode(state.waterHandles[i]);
+  }
+  for (let i = 0; i < state.riverHandles.length; i++) {
+    if (state.riverHandles[i] !== 0) destroySceneNode(state.riverHandles[i]);
+  }
+  state.waterHandles = [];
+  state.riverHandles = [];
+
+  for (let i = 0; i < state.world.water.length; i++) {
+    state.waterHandles.push(spawnWaterVolume(state.world.water[i]));
+  }
+  for (let i = 0; i < state.world.rivers.length; i++) {
+    state.riverHandles.push(spawnRiver(state.world.rivers[i]));
+  }
 }
 
 // ---- placeholder rendering ---------------------------------------------------
@@ -385,5 +415,6 @@ export function rebuildAllSceneNodes(state: EditorState): void {
   if (state.world.terrain !== null) {
     state.pendingTerrainRebuild = true;
   }
+  state.pendingWaterRebuild = true;
   state.pendingEnvironmentSync = true;
 }

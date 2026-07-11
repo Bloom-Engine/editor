@@ -42,12 +42,14 @@ export function drawToolbar(ui: UiContext, state: EditorState): void {
   drawRect(x, y + 2, 1, Theme.buttonHeight - 4, Theme.border);
   x += 8;
 
-  // Tool buttons.
+  // Tool buttons. Water/river were reachable only by hotkey (T/Y) before.
   const tools: [ToolId, string][] = [
     ['select', 'Sel'],
     ['place', 'Place'],
     ['transform', 'Move'],
     ['brush', 'Brush'],
+    ['water', 'Water'],
+    ['river', 'River'],
   ];
   for (let i = 0; i < tools.length; i++) {
     const [tid, lbl] = tools[i];

@@ -2,7 +2,7 @@
 // Supports Shift-click for multi-select.
 
 import { getMouseX, getMouseY, isMouseButtonPressed, isKeyDown, MouseButton, Key } from 'bloom';
-import { EditorState } from '../state/editor-state';
+import { EditorState, selectEntity } from '../state/editor-state';
 import { pickEntityAtMouse, syncSelectionOutline } from '../viewport/picking';
 
 export function handleSelectClick(state: EditorState): void {
@@ -21,21 +21,21 @@ export function handleSelectClick(state: EditorState): void {
         if (state.selection.primary === pickedId) {
           // Promote another selected entity or clear.
           const remaining = Array.from(state.selection.ids);
-          state.selection.primary = remaining.length > 0 ? remaining[0] : null;
+          selectEntity(state, remaining.length > 0 ? remaining[0] : null);
         }
       } else {
         state.selection.ids.add(pickedId);
-        state.selection.primary = pickedId;
+        selectEntity(state, pickedId);
       }
     } else {
       state.selection.ids.clear();
       state.selection.ids.add(pickedId);
-      state.selection.primary = pickedId;
+      selectEntity(state, pickedId);
     }
   } else {
     if (!shift) {
       state.selection.ids.clear();
-      state.selection.primary = null;
+      selectEntity(state, null);
     }
   }
   syncSelectionOutline(state);

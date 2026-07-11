@@ -63,9 +63,16 @@ export class AssetCatalog {
   }
 }
 
+// What kind of thing the selection refers to. Entities, water volumes, and
+// rivers are stored in separate arrays in the world file and are not
+// interchangeable, so the selection has to say which array `primary` indexes
+// into — an id alone is ambiguous.
+export type SelectionKind = 'entity' | 'water' | 'river';
+
 export interface Selection {
-  ids: Set<EntityId>;
-  primary: EntityId | null;           // The one showing the gizmo + inspector.
+  ids: Set<EntityId>;                 // Multi-select; entities only.
+  primary: string | null;             // The one showing the gizmo + inspector.
+  kind: SelectionKind;                // What `primary` is.
 }
 
 export interface OrbitCamera {
@@ -142,9 +149,13 @@ export interface EditorState {
   // Scene sync
   handles: HandleMap;
   terrainHandle: number;               // 0 if no terrain node exists.
+  // Water/river scene nodes, index-aligned with world.water / world.rivers.
+  waterHandles: number[];
+  riverHandles: number[];
   pendingRebuild: Set<EntityId>;
   pendingDestroy: Set<number>;         // SceneNodeHandles to destroy this frame.
   pendingTerrainRebuild: boolean;
+  pendingWaterRebuild: boolean;        // Any water/river add, edit, or removal.
   pendingEnvironmentSync: boolean;
 
   // Viewport
@@ -178,7 +189,7 @@ export function createEditorState(): EditorState {
     world: createEmptyWorld('untitled', 'Untitled World'),
     editingPrefab: null,
     modified: false,
-    selection: { ids: new Set<EntityId>(), primary: null },
+    selection: { ids: new Set<EntityId>(), primary: null, kind: 'entity' },
     activeTool: 'select',
     transformMode: 'move',
     placeAssetRef: null,
@@ -203,9 +214,12 @@ export function createEditorState(): EditorState {
     maxHistory: 200,
     handles: new HandleMap(),
     terrainHandle: 0,
+    waterHandles: [],
+    riverHandles: [],
     pendingRebuild: new Set<EntityId>(),
     pendingDestroy: new Set<number>(),
     pendingTerrainRebuild: false,
+    pendingWaterRebuild: false,
     pendingEnvironmentSync: false,
     viewportLeft: 240,
     viewportRight: 1000,
@@ -213,6 +227,34 @@ export function createEditorState(): EditorState {
     viewportBottom: 776,
     playtesting: false,
   };
+}
+
+// ---- selection helpers -----------------------------------------------------
+
+// The selected entity id, or null when nothing is selected *or* the selection
+// is a water volume / river. Every entity-only path (gizmos, entity inspector,
+// duplicate, delete) goes through this so a selected river can never be fed to
+// code that assumes `world.entities`.
+export function selectedEntityId(state: EditorState): EntityId | null {
+  if (state.selection.kind !== 'entity') return null;
+  return state.selection.primary;
+}
+
+export function selectEntity(state: EditorState, id: EntityId | null): void {
+  state.selection.primary = id;
+  state.selection.kind = 'entity';
+}
+
+export function selectWater(state: EditorState, id: string): void {
+  state.selection.ids.clear();
+  state.selection.primary = id;
+  state.selection.kind = 'water';
+}
+
+export function selectRiver(state: EditorState, id: string): void {
+  state.selection.ids.clear();
+  state.selection.primary = id;
+  state.selection.kind = 'river';
 }
 
 // ---- handle map helpers ----------------------------------------------------

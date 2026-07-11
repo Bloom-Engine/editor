@@ -3,7 +3,7 @@
 
 import { drawRay, getMouseX, getMouseY, isMouseButtonDown, isMouseButtonPressed, isMouseButtonReleased, getScreenWidth, getScreenHeight, MouseButton } from 'bloom';
 import { TransformData, Vec3Lit } from 'bloom/world';
-import { EditorState } from '../state/editor-state';
+import { EditorState, selectedEntityId } from '../state/editor-state';
 import { TransformEntityCommand } from '../state/commands/transform-entity';
 import { runCommand } from '../state/commands';
 import { mouseToWorldRay, raySegmentDistance } from '../viewport/ray';
@@ -28,14 +28,14 @@ export function createRotateGizmoState(): RotateGizmoState {
 }
 
 export function updateRotateGizmo(state: EditorState, gizmo: RotateGizmoState): void {
-  if (state.playtesting || state.selection.primary === null ||
+  if (state.playtesting || selectedEntityId(state) === null ||
       state.activeTool !== 'transform' || state.transformMode !== 'rotate') {
     gizmo.visible = false;
     gizmo.dragging = false;
     return;
   }
 
-  const entity = state.world.entities.find(e => e.id === state.selection.primary);
+  const entity = state.world.entities.find(e => e.id === selectedEntityId(state));
   if (!entity) { gizmo.visible = false; return; }
 
   gizmo.visible = true;

@@ -20,11 +20,12 @@ import { createEntity, Vec3Lit } from 'bloom/world';
 import { handleSelectClick } from './tools/select-tool';
 import { handlePlaceClick } from './tools/place-tool';
 
-import { EditorState, createEditorState, nextEntityId } from './state/editor-state';
+import { EditorState, createEditorState, nextEntityId, selectedEntityId } from './state/editor-state';
 import { runCommand, undo, redo } from './state/commands';
 import { CreateEntityCommand } from './state/commands/create-entity';
 import { DestroyEntityCommand } from './state/commands/destroy-entity';
 import { DuplicateEntityCommand } from './state/commands/duplicate-entity';
+import { RemoveWaterCommand, RemoveRiverCommand } from './state/commands/edit-water';
 
 import { loadProject } from './io/project';
 import { loadAssetCatalog } from './io/asset-catalog';
@@ -133,22 +134,30 @@ while (!windowShouldClose()) {
     if (isKeyPressed(Key.S)) saveCurrentWorld(state);
   }
 
-  // Delete selected entity. Delete only — Backspace must stay free for text
-  // widgets — and never while a widget (text field, drag) is active.
-  if (isKeyPressed(Key.DELETE) && ui.activeId === null) {
-    if (state.selection.primary !== null) {
+  // Delete the selection — entity, water volume, or river. Delete only
+  // (Backspace must stay free for text widgets), and never while a widget
+  // (text field, drag) is active.
+  if (isKeyPressed(Key.DELETE) && ui.activeId === null && state.selection.primary !== null) {
+    if (state.selection.kind === 'entity') {
       const entity = state.world.entities.find(e => e.id === state.selection.primary);
       if (entity) {
         const idx = state.world.entities.indexOf(entity);
         runCommand(state, new DestroyEntityCommand(entity, idx));
       }
+    } else if (state.selection.kind === 'water') {
+      const idx = state.world.water.findIndex(w => w.id === state.selection.primary);
+      if (idx >= 0) runCommand(state, new RemoveWaterCommand(state.world.water[idx], idx));
+    } else if (state.selection.kind === 'river') {
+      const idx = state.world.rivers.findIndex(r => r.id === state.selection.primary);
+      if (idx >= 0) runCommand(state, new RemoveRiverCommand(state.world.rivers[idx], idx));
     }
   }
 
-  // Duplicate (Ctrl+D).
+  // Duplicate (Ctrl+D). Entities only.
   if ((isKeyDown(Key.LEFT_CONTROL) || isKeyDown(Key.LEFT_SUPER)) && isKeyPressed(Key.D)) {
-    if (state.selection.primary !== null) {
-      const entity = state.world.entities.find(e => e.id === state.selection.primary);
+    const dupId = selectedEntityId(state);
+    if (dupId !== null) {
+      const entity = state.world.entities.find(e => e.id === dupId);
       if (entity) {
         runCommand(state, new DuplicateEntityCommand(entity));
       }

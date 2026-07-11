@@ -2,11 +2,15 @@
 // nonzero on any failure). Prints each failing assertion by name plus a
 // pass/fail summary; runSelfTests returns the failure count.
 
-import { WorldData, PrefabData, createEmptyWorld, createEntity } from 'bloom/world';
+import { WorldData, PrefabData, WaterVolume, createEmptyWorld, createEntity } from 'bloom/world';
 import { validateWorld, validatePrefab } from 'bloom/world';
 import { buildHeightmapMesh, sampleHeight, defaultTerrain } from 'bloom/world';
 import { expandPrefab, createPrefabRegistry, registerPrefab, PrefabLeaf } from 'bloom/world';
-import { createEditorState, nextCounterId } from '../state/editor-state';
+import {
+  createEditorState, nextCounterId,
+  selectedEntityId, selectEntity, selectRiver,
+} from '../state/editor-state';
+import { EditWaterCommand, RemoveWaterCommand } from '../state/commands/edit-water';
 import { runCommand, undo, redo } from '../state/commands';
 import { CreateEntityCommand } from '../state/commands/create-entity';
 import { TransformEntityCommand } from '../state/commands/transform-entity';
@@ -39,6 +43,7 @@ export function runSelfTests(): number {
   testCreateTerrainUndo();
   testCounterIds();
   testUserDataCommand();
+  testWaterCommands();
 
   console.log('self-tests: ' + passed + ' passed, ' + failed + ' failed');
   return failed;
@@ -194,6 +199,49 @@ function testUserDataCommand(): void {
 
   undo(state);
   assert(state.world.entities[0].userData['cooldown'] === '5', 'userdata: undo restores removed key');
+}
+
+function testWaterCommands(): void {
+  const state = createEditorState();
+  const volume: WaterVolume = {
+    id: 'water_1',
+    kind: 'box',
+    center: [0, -1, 0],
+    size: [10, 2, 10],
+    surfaceHeight: 0.5,
+    color: [0.2, 0.5, 0.8, 0.6],
+    waveAmplitude: 0.1,
+    waveSpeed: 1.0,
+  };
+  state.world.water.push(volume);
+
+  // Edit coalescing: two drags on the same volume are one undo entry.
+  const before = { ...volume, center: [0, -1, 0] as [number, number, number], size: [10, 2, 10] as [number, number, number], color: [0.2, 0.5, 0.8, 0.6] as [number, number, number, number] };
+  const mid = { ...before, waveSpeed: 2.0 };
+  runCommand(state, new EditWaterCommand('water_1', before, mid));
+  const after = { ...before, waveSpeed: 3.0 };
+  runCommand(state, new EditWaterCommand('water_1', mid, after));
+  assert(state.world.water[0].waveSpeed === 3.0, 'water: edit applied');
+  assert(state.undoStack.length === 1, 'water: consecutive edits coalesce into one undo entry');
+
+  undo(state);
+  assert(state.world.water[0].waveSpeed === 1.0, 'water: undo restores the pre-drag value');
+
+  // Removal restores at the original index, so ordering round-trips.
+  state.world.water.push({ ...volume, id: 'water_2' });
+  runCommand(state, new RemoveWaterCommand(state.world.water[0], 0));
+  assert(state.world.water.length === 1, 'water: removed');
+  assert(state.world.water[0].id === 'water_2', 'water: the right one was removed');
+
+  undo(state);
+  assert(state.world.water.length === 2, 'water: remove undone');
+  assert(state.world.water[0].id === 'water_1', 'water: restored at its original index');
+
+  // Selecting a river must not let entity-only paths act on it.
+  selectRiver(state, 'river_1');
+  assert(selectedEntityId(state) === null, 'selection: a river is not an entity selection');
+  selectEntity(state, 'ent_1');
+  assert(selectedEntityId(state) === 'ent_1', 'selection: entity selection reads back');
 }
 
 function testCommandUndoRedo(): void {

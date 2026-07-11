@@ -4,7 +4,7 @@
 
 import { drawRay, drawCube, getMouseX, getMouseY, isMouseButtonDown, isMouseButtonPressed, getScreenWidth, getScreenHeight, MouseButton } from 'bloom';
 import { TransformData, Vec3Lit } from 'bloom/world';
-import { EditorState } from '../state/editor-state';
+import { EditorState, selectedEntityId } from '../state/editor-state';
 import { TransformEntityCommand } from '../state/commands/transform-entity';
 import { runCommand } from '../state/commands';
 import { mouseToWorldRay, raySegmentDistance } from '../viewport/ray';
@@ -29,14 +29,14 @@ export function createScaleGizmoState(): ScaleGizmoState {
 }
 
 export function updateScaleGizmo(state: EditorState, gizmo: ScaleGizmoState): void {
-  if (state.playtesting || state.selection.primary === null ||
+  if (state.playtesting || selectedEntityId(state) === null ||
       state.activeTool !== 'transform' || state.transformMode !== 'scale') {
     gizmo.visible = false;
     gizmo.dragging = false;
     return;
   }
 
-  const entity = state.world.entities.find(e => e.id === state.selection.primary);
+  const entity = state.world.entities.find(e => e.id === selectedEntityId(state));
   if (!entity) { gizmo.visible = false; return; }
 
   gizmo.visible = true;
