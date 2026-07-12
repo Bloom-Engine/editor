@@ -9,3 +9,6 @@ dist/
 .DS_Store
 *.log
 .claude/
+
+# Crash dumps written by the engine crash filter during debugging
+tools/.testout/
