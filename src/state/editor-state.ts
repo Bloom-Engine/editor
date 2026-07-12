@@ -22,6 +22,8 @@ export interface Project {
   prefabsDir: string;
   worldsDir: string;
   defaultWorld: string;
+  /// Optional: the game binary to launch for play-in-editor. Empty = no Play button.
+  playCommand: string;
 }
 
 export interface ModelEntry {

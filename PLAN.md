@@ -204,6 +204,18 @@ The dividing line, for future schema questions: **lights are engine-universal �
 - **D2. Kernel:** implement the `'paint'` branch in `applyBrush` (`brush-tool.ts:121-150`): add weight to the active layer's per-cell `weights[]` with the same radial falloff as sculpt kernels, renormalizing across layers per cell. Undo via a weights-snapshot command (mirror `TerrainStrokeCommand`).
 - **D3. Splat rendering.** ⚠ Investigate `bloom_compile_material` (`../engine/native/.../ffi_core/models.rs`, TS wrapper in the engine) — determine whether compiled materials support texture bindings. Target design: pack up to 4 layer weights into an RGBA weights texture regenerated on paint, sample each layer's texture by terrain UV × `tileScale`, blend by weights. Implement in the engine (shared by editor and `instantiateWorld`). If `compile_material` cannot bind textures, the required engine extension (a material-with-texture-slots FFI) is **in scope** — enumerate and build it rather than shipping a vertex-color approximation. Acceptance: paint two layers in the editor, save, load in a game via `instantiateWorld`, blended texturing visible in both.
 
+### Play-in-editor — ✅ DONE (2026-07-12)
+
+> A **Play** button in the toolbar (and Ctrl+R): saves the level currently on screen
+> — not the one on disk — to a scratch world, and launches the real game on it
+> (`--world <path>`, new in the shooter). The fly-cam shows you geometry; only the
+> game shows you whether the spawners spawn and whether the arena has a shape.
+>
+> Needed two engine additions: **EN-048 `launchProcess`** (Perry's
+> `child_process.spawn` compiles and then does nothing — undefined pid, no process),
+> and the shooter's `--world` override. `playCommand` in `editor.project.json` opts a
+> project in; no key, no button.
+
 ### E. Prefab authoring — ✅ DONE (2026-07-12)
 
 > **Shipped.** `prefab-tool.ts` had existed for weeks with **zero call sites**,

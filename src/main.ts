@@ -52,6 +52,7 @@ import {
 import { drawEnvironmentPanel } from './ui/layouts/environment-panel';
 import { drawBrushPanel } from './ui/layouts/brush-panel';
 import { updatePlaytest, drawPlaytestOverlay } from './playtest/playtest';
+import { launchGame } from './playtest/launch';
 import { frameCameraOnSelection, frameCameraOnWorld } from './viewport/frame';
 import { addRecentProject } from './io/recent';
 import { drawToolbar } from './ui/layouts/toolbar';
@@ -140,6 +141,8 @@ while (!windowShouldClose()) {
       if (state.editingPrefab) savePrefabToDisk(state);
       else saveCurrentWorld(state);
     }
+    // Ctrl+R — run the game on this level. (Ctrl+P is already the fly-cam.)
+    if (isKeyPressed(Key.R) && !state.editingPrefab) launchGame(state);
   }
 
   // Delete the selection — entity, water volume, or river. Delete only
