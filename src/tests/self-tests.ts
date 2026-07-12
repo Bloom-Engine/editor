@@ -17,6 +17,10 @@ import { CreateEntityCommand } from '../state/commands/create-entity';
 import { TransformEntityCommand } from '../state/commands/transform-entity';
 import { CreateTerrainCommand } from '../state/commands/create-terrain';
 import { SetUserDataCommand } from '../state/commands/set-userdata';
+import {
+  enterNewPrefabMode, enterPrefabEditMode, exitPrefabMode, wouldCycle,
+} from '../tools/prefab-tool';
+import { joinPath } from '../io/paths';
 
 let passed = 0;
 let failed = 0;
@@ -43,6 +47,9 @@ export function runSelfTests(): number {
   testMapSize();
   testCreateTerrainUndo();
   testCounterIds();
+  testPrefabAuthoringMode();
+  testPrefabAuthoringCycles();
+  testPathJoinIdentity();
   testUserDataCommand();
   testWaterCommands();
   testLightMigration();
@@ -321,4 +328,116 @@ function testCommandUndoRedo(): void {
   undo(state); // undo transform
   undo(state); // undo create
   assert(state.world.entities.length === 0, 'command: undo create');
+}
+
+
+// --- Prefab authoring mode (PLAN §E) ----------------------------------------
+//
+// The mode works by swapping the prefab's children in AS the world's entities, so
+// every existing tool operates on them unchanged. These tests pin the two things
+// that swap could plausibly get wrong: losing the world on the way out, and letting
+// a prefab contain itself.
+function testPrefabAuthoringMode(): void {
+  const state = createEditorState();
+  state.project = {
+    root: '.', modelsDir: 'models', prefabsDir: 'prefabs',
+    worldsDir: 'worlds', texturesDir: 'textures',
+  } as any;
+
+  // A world with one entity, and a dirty flag we expect to survive the round trip.
+  runCommand(state, new CreateEntityCommand(createEntity('world_ent', 'a.glb', [1, 2, 3])));
+  const worldRef = state.world;
+  const undoDepth = state.undoStack.length;
+  assert(state.world.entities.length === 1, 'prefab mode: world starts with 1 entity');
+
+  // Entering swaps the world out for a neutral authoring stage.
+  enterNewPrefabMode(state, 'camp', 'Camp');
+  assert(state.editingPrefab !== null, 'prefab mode: entered');
+  assert(state.world !== worldRef, 'prefab mode: world was swapped out');
+  assert(state.world.entities.length === 0, 'prefab mode: new prefab starts empty');
+  assert(state.world.terrain === null, 'prefab mode: authoring stage has no terrain');
+  assert(state.undoStack.length === 0, 'prefab mode: history is separate');
+
+  // Placing a part uses the ordinary entity command — that is the whole point.
+  runCommand(state, new CreateEntityCommand(createEntity('part_0', 'tent.glb', [0, 0, 0])));
+  runCommand(state, new CreateEntityCommand(createEntity('part_1', 'fire.glb', [2, 0, 0])));
+  assert(state.world.entities.length === 2, 'prefab mode: parts placed as entities');
+
+  // ...and so does undo.
+  undo(state);
+  assert(state.world.entities.length === 1, 'prefab mode: undo works on parts');
+  redo(state);
+  assert(state.world.entities.length === 2, 'prefab mode: redo works on parts');
+
+  // Leaving must restore the world EXACTLY, history included.
+  exitPrefabMode(state);
+  assert(state.editingPrefab === null, 'prefab mode: exited');
+  assert(state.world === worldRef, 'prefab mode: original world restored');
+  assert(state.world.entities.length === 1, 'prefab mode: world entity survived');
+  assert(state.undoStack.length === undoDepth, 'prefab mode: world history restored');
+  assert(state.prefabStash === null, 'prefab mode: stash cleared');
+}
+
+// --- Cycle rejection (PLAN §E acceptance) ------------------------------------
+//
+// A prefab that contains itself expands forever at load and takes the game with it.
+// Direct self-reference is the obvious case; the one that actually gets built by
+// accident is transitive — A holds B, B holds A.
+function testPrefabAuthoringCycles(): void {
+  const state = createEditorState();
+
+  // Catalog: b contains c, c contains a.
+  state.catalog.prefabs.set('b', {
+    id: 'b', name: 'B', children: [
+      { id: 'x', modelRef: null, prefabRef: 'c',
+        transform: { position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] },
+        tint: null, tags: [] },
+    ],
+  } as any);
+  state.catalog.prefabs.set('c', {
+    id: 'c', name: 'C', children: [
+      { id: 'y', modelRef: null, prefabRef: 'a',
+        transform: { position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] },
+        tint: null, tags: [] },
+    ],
+  } as any);
+  state.catalog.prefabs.set('d', { id: 'd', name: 'D', children: [] } as any);
+
+  // Not editing anything: nothing to cycle into.
+  assert(!wouldCycle(state, 'b'), 'cycle: no-op outside prefab mode');
+
+  enterNewPrefabMode(state, 'a', 'A');
+  assert(wouldCycle(state, 'a'), 'cycle: direct self-reference rejected');
+  assert(wouldCycle(state, 'b'), 'cycle: TRANSITIVE reference rejected (a -> b -> c -> a)');
+  assert(wouldCycle(state, 'c'), 'cycle: one-hop transitive rejected (a -> c -> a)');
+  assert(!wouldCycle(state, 'd'), 'cycle: an unrelated prefab is allowed');
+  exitPrefabMode(state);
+}
+
+
+// --- Asset-key identity ------------------------------------------------------
+//
+// The catalog is keyed by the SAME string the world file stores in `modelRef`, and
+// the two are built by different code paths. A path that is merely EQUIVALENT is
+// not good enough — it has to be EQUAL, because the lookup is a Map.get.
+//
+// This is not hypothetical: rootDir came out as '.' whenever the project file sat
+// in the CWD, so the catalog was keyed './assets/models/x.glb' while worlds said
+// 'assets/models/x.glb'. Every lookup missed and the editor rendered the entire
+// arena — trees, building, every prop — as grey placeholder cubes, silently.
+function testPathJoinIdentity(): void {
+  assert(joinPath('.', 'assets/models') === 'assets/models',
+    'paths: "." root does not poison the key');
+  assert(joinPath('./', 'assets/models') === 'assets/models',
+    'paths: "./" root does not poison the key');
+  assert(joinPath('', 'assets/models') === 'assets/models',
+    'paths: empty root is a no-op');
+  assert(joinPath('proj', 'assets/models') === 'proj/assets/models',
+    'paths: a real root still joins');
+  assert(joinPath('proj/', 'assets/models') === 'proj/assets/models',
+    'paths: trailing slash is not doubled');
+  // The thing that actually broke: catalog key must equal the world file's ref.
+  const catalogKey = joinPath(joinPath('.', 'assets/models'), 'prop_tree.glb');
+  assert(catalogKey === 'assets/models/prop_tree.glb',
+    'paths: catalog key MATCHES the world modelRef');
 }

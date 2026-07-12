@@ -27,6 +27,11 @@ export function drawStatusBar(state: EditorState): void {
     drawText('selected: ' + state.selection.primary, 220, ty, Theme.fontSizeSmall, Theme.textAccent);
   }
 
+  // Transient message — a refused action has to SAY it was refused.
+  if (state.statusMessageT > 0 && state.statusMessage.length > 0) {
+    drawText(state.statusMessage, 440, ty, Theme.fontSizeSmall, Theme.textError);
+  }
+
   // Modified indicator.
   if (state.modified) {
     drawText('* modified', screenW - 100, ty, Theme.fontSizeSmall, Theme.textError);

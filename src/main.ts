@@ -46,7 +46,9 @@ import { updateBrushTool } from './tools/brush-tool';
 import { updateWaterTool, drawWaterVolumes } from './tools/water-tool';
 import { updateRiverTool, drawRiverSplines } from './tools/river-tool';
 import { updateLightTool, drawLightMarkers, RemoveLightCommand } from './tools/light-tool';
-import { updatePrefabTool, drawPrefabBreadcrumb } from './tools/prefab-tool';
+import {
+  updatePrefabTool, drawPrefabBreadcrumb, savePrefabToDisk,
+} from './tools/prefab-tool';
 import { drawEnvironmentPanel } from './ui/layouts/environment-panel';
 import { drawBrushPanel } from './ui/layouts/brush-panel';
 import { updatePlaytest, drawPlaytestOverlay } from './playtest/playtest';
@@ -132,7 +134,12 @@ while (!windowShouldClose()) {
   if (isKeyDown(Key.LEFT_CONTROL) || isKeyDown(Key.LEFT_SUPER)) {
     if (isKeyPressed(Key.Z)) undo(state);
     if (isKeyPressed(Key.Y)) redo(state);
-    if (isKeyPressed(Key.S)) saveCurrentWorld(state);
+    // In prefab mode Ctrl+S means "save the prefab" — saving the world from inside
+    // a prefab would write the neutral authoring stage over the real level.
+    if (isKeyPressed(Key.S)) {
+      if (state.editingPrefab) savePrefabToDisk(state);
+      else saveCurrentWorld(state);
+    }
   }
 
   // Delete the selection — entity, water volume, or river. Delete only
@@ -206,6 +213,11 @@ while (!windowShouldClose()) {
   // ---- prefab tool update --------------------------------------------------
 
   updatePrefabTool(state);
+
+  if (state.statusMessageT > 0) {
+    state.statusMessageT = state.statusMessageT - dt;
+    if (state.statusMessageT < 0) state.statusMessageT = 0;
+  }
 
   // ---- camera update -------------------------------------------------------
 
