@@ -6,7 +6,7 @@ import {
   pickScene, setPostFxSelected, setPostFxHovered, enablePostFx,
 } from 'bloom/scene';
 import {
-  EditorState, entityOfHandle, handleOfEntity,
+  EditorState, entityOfHandle, handleOfEntity, selectedEntityId,
 } from '../state/editor-state';
 
 // Call once at startup to enable the outline post-FX pipeline.
@@ -41,8 +41,9 @@ export function updateHover(
 
 // Update the outline to match the current selection.
 export function syncSelectionOutline(state: EditorState): void {
-  if (state.selection.primary !== null) {
-    const h = handleOfEntity(state.handles, state.selection.primary);
+  const entityId = selectedEntityId(state);
+  if (entityId !== null) {
+    const h = handleOfEntity(state.handles, entityId);
     setPostFxSelected(h);
   } else {
     setPostFxSelected(0);

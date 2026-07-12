@@ -1,10 +1,14 @@
-// Left-side outliner: flat list of all entities in the world. Clicking selects.
+// Left-side outliner: everything in the world, in three sections — entities,
+// water volumes, rivers. Clicking selects; the selection carries which section
+// it came from, because ids are only unique within their own array.
 
 import { getScreenHeight } from 'bloom';
 import { UiContext } from '../ui-context';
 import { beginPanel, endPanel, labelSmall, listRow } from '../widgets';
 import { Theme } from '../theme';
-import { EditorState } from '../../state/editor-state';
+import {
+  EditorState, selectEntity, selectWater, selectRiver, selectLight,
+} from '../../state/editor-state';
 import { syncSelectionOutline } from '../../viewport/picking';
 
 export function drawOutliner(ui: UiContext, state: EditorState): void {
@@ -16,22 +20,69 @@ export function drawOutliner(ui: UiContext, state: EditorState): void {
   beginPanel(ui, 'outliner', 0, py, pw, ph, 'Outliner');
 
   const entities = state.world.entities;
-  if (entities.length === 0) {
-    labelSmall(ui, 'No entities');
+  const water = state.world.water;
+  const rivers = state.world.rivers;
+  const lights = state.world.lights;
+
+  if (entities.length === 0 && water.length === 0 && rivers.length === 0 && lights.length === 0) {
+    labelSmall(ui, 'Empty world');
     endPanel(ui);
     state.viewportLeft = pw;
     return;
   }
 
+  // Water and rivers first: there are only ever a handful, while a world can
+  // have hundreds of entities, and this panel does not scroll yet. Listing them
+  // last would put them permanently below the fold and make them unselectable.
+  if (water.length > 0) {
+    labelSmall(ui, 'Water');
+    for (let i = 0; i < water.length; i++) {
+      const w = water[i];
+      const selected = state.selection.kind === 'water' && state.selection.primary === w.id;
+      if (listRow(ui, 'out_water_' + i, w.id, selected, 1)) {
+        selectWater(state, w.id);
+        syncSelectionOutline(state);
+      }
+    }
+  }
+
+  if (rivers.length > 0) {
+    labelSmall(ui, 'Rivers');
+    for (let i = 0; i < rivers.length; i++) {
+      const r = rivers[i];
+      const selected = state.selection.kind === 'river' && state.selection.primary === r.id;
+      if (listRow(ui, 'out_river_' + i, r.id, selected, 1)) {
+        selectRiver(state, r.id);
+        syncSelectionOutline(state);
+      }
+    }
+  }
+
+  if (lights.length > 0) {
+    labelSmall(ui, 'Lights');
+    for (let i = 0; i < lights.length; i++) {
+      const l = lights[i];
+      const selected = state.selection.kind === 'light' && state.selection.primary === l.id;
+      if (listRow(ui, 'out_light_' + i, l.name, selected, 1)) {
+        selectLight(state, l.id);
+        syncSelectionOutline(state);
+      }
+    }
+  }
+
+  if (water.length > 0 || rivers.length > 0 || lights.length > 0) {
+    labelSmall(ui, 'Entities');
+  }
+
   for (let i = 0; i < entities.length; i++) {
     const entity = entities[i];
-    const selected = state.selection.primary === entity.id;
+    const selected = state.selection.kind === 'entity' && state.selection.primary === entity.id;
     const indent = entity.prefabRef !== null ? 1 : 0;
 
-    if (listRow(ui, 'out_' + i, entity.name, selected, indent)) {
+    if (listRow(ui, 'out_ent_' + i, entity.name, selected, indent)) {
       state.selection.ids.clear();
       state.selection.ids.add(entity.id);
-      state.selection.primary = entity.id;
+      selectEntity(state, entity.id);
       syncSelectionOutline(state);
     }
   }

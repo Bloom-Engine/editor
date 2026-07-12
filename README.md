@@ -8,19 +8,33 @@ Like everything in the Bloom ecosystem, the editor is written in TypeScript and 
 
 Core editing works; several planned features are unfinished. **[`PLAN.md`](PLAN.md)** contains a full verified audit (what works, what's broken, with file/line references) and the completion plan, including a definition of done. In short:
 
-- **Working today:** entity placement and selection, move/rotate/scale gizmos, terrain sculpting (raise/lower/smooth/flatten), undo/redo, save/load with autosave, environment panel, fly-camera playtest mode.
-- **Not finished yet:** prefab authoring UI, terrain texture painting, water/river editing beyond initial placement, `userData` editing, asset thumbnails, and a handful of bugs listed in the plan.
+- **Working today:** opens the shooter project and renders `arena_02` (entities with no model — spawners, pickups, colliders — draw as colored, pickable placeholder boxes); entity placement and selection, move/rotate/scale gizmos, terrain sculpting, undo/redo, save/load with autosave, `userData` key/value editing, environment panel, fly-camera playtest mode.
+- **Not finished yet:** prefab authoring UI, terrain texture painting, water/river editing beyond initial placement, asset thumbnails, recent-projects UI.
+
+Startup blocks for ~20 s while every GLB in the project's models dir is loaded synchronously (26 for the shooter). The window is black until that finishes — it is loading, not hung.
+
+### Platform notes
+
+Bringing this up on Windows required fixing three API mismatches in the editor (`Key.*` and `MouseButton.*` are `SCREAMING_SNAKE` in the engine, and `drawLine` takes a `Color`, not four channels) plus one engine gap (`setSceneNodeTransform` / `updateSceneNodeGeometry` couldn't cross the FFI — see `PLAN.md`). Also read [`docs/perry-map-size-av.md`](docs/perry-map-size-av.md) before putting a `Map` in editor state: Perry 0.5.x miscompiles `Map` fields declared on an interface.
 
 ## Building
 
 Requires [Perry](https://github.com/andrewtdiz/perry) ≥ 0.5 on your `PATH`, and the [engine](https://github.com/Bloom-Engine/engine) checked out as a sibling directory named `../engine` (the `bloom` dependency resolves via `file:../engine/`).
 
 ```sh
-PERRY_ALLOW_PERRY_FEATURES=1 perry compile src/main.ts
+perry compile src/main.ts
 ./main
 ```
 
-The env var is a temporary escape hatch until the `perry.allow.nativeLibrary` grant lands in `package.json` (task A1 in `PLAN.md`). `perry compile` emits the binary as `./main`.
+`perry compile` emits the binary as `./main` (`main.exe` on Windows; pass `-o <name>` to change it). The native-library grant lives in `package.json` under `perry.allow.nativeLibrary`, so no environment variables are needed.
+
+Run the self-test suite headless with:
+
+```sh
+./main --test
+```
+
+It prints failing assertions plus a summary and exits nonzero on any failure.
 
 ## Usage
 

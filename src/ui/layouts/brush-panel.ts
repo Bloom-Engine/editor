@@ -2,9 +2,11 @@
 // Controls: brush kind radio, radius slider, strength slider, flatten target.
 
 import { UiContext } from '../ui-context';
-import { beginPanel, endPanel, label, separator, dragFloat, toggleButton, Ref } from '../widgets';
+import { beginPanel, endPanel, labelSmall, separator, dragFloat, toggleButton, button, Ref } from '../widgets';
 import { Theme } from '../theme';
 import { EditorState, BrushSettings } from '../../state/editor-state';
+import { runCommand } from '../../state/commands';
+import { CreateTerrainCommand } from '../../state/commands/create-terrain';
 
 export function drawBrushPanel(ui: UiContext, state: EditorState): void {
   if (state.activeTool !== 'brush') return;
@@ -13,6 +15,19 @@ export function drawBrushPanel(ui: UiContext, state: EditorState): void {
   const py = Theme.toolbarHeight + 10;
   const pw = 220;
   const ph = 240;
+
+  // Terrain-less world: offer explicit creation instead of sculpting into a
+  // silently materialized heightmap.
+  if (!state.world.terrain) {
+    beginPanel(ui, 'brush_panel', px, py, pw, 110, 'Brush Settings');
+    labelSmall(ui, 'This world has no terrain.');
+    labelSmall(ui, 'Create one to start sculpting:');
+    if (button(ui, 'brush_create_terrain', 'Create terrain')) {
+      runCommand(state, new CreateTerrainCommand());
+    }
+    endPanel(ui);
+    return;
+  }
 
   beginPanel(ui, 'brush_panel', px, py, pw, ph, 'Brush Settings');
 

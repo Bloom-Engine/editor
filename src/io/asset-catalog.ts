@@ -12,6 +12,7 @@ import { readFile } from 'bloom';
 import { PrefabData } from 'bloom/world';
 import { EditorState, ModelEntry, Project } from '../state/editor-state';
 import { basenameNoExt, categoryFromName, joinPath } from './paths';
+import { invalidatePrefabRegistry } from '../world-sync/sync';
 
 export function loadAssetCatalog(state: EditorState): void {
   if (!state.project) return;
@@ -19,6 +20,7 @@ export function loadAssetCatalog(state: EditorState): void {
 
   loadModels(state, project);
   loadPrefabs(state, project);
+  invalidatePrefabRegistry();
 }
 
 function loadModels(state: EditorState, project: Project): void {

@@ -51,7 +51,7 @@ export function textInput(
     }
 
     // ESC cancels focus.
-    if (isKeyPressed(Key.Escape)) {
+    if (isKeyPressed(Key.ESCAPE)) {
       ui.activeId = null;
     }
   }

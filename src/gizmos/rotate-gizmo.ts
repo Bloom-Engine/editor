@@ -3,7 +3,7 @@
 
 import { drawRay, getMouseX, getMouseY, isMouseButtonDown, isMouseButtonPressed, isMouseButtonReleased, getScreenWidth, getScreenHeight, MouseButton } from 'bloom';
 import { TransformData, Vec3Lit } from 'bloom/world';
-import { EditorState } from '../state/editor-state';
+import { EditorState, selectedEntityId } from '../state/editor-state';
 import { TransformEntityCommand } from '../state/commands/transform-entity';
 import { runCommand } from '../state/commands';
 import { mouseToWorldRay, raySegmentDistance } from '../viewport/ray';
@@ -28,14 +28,14 @@ export function createRotateGizmoState(): RotateGizmoState {
 }
 
 export function updateRotateGizmo(state: EditorState, gizmo: RotateGizmoState): void {
-  if (state.playtesting || state.selection.primary === null ||
+  if (state.playtesting || selectedEntityId(state) === null ||
       state.activeTool !== 'transform' || state.transformMode !== 'rotate') {
     gizmo.visible = false;
     gizmo.dragging = false;
     return;
   }
 
-  const entity = state.world.entities.find(e => e.id === state.selection.primary);
+  const entity = state.world.entities.find(e => e.id === selectedEntityId(state));
   if (!entity) { gizmo.visible = false; return; }
 
   gizmo.visible = true;
@@ -51,7 +51,7 @@ export function updateRotateGizmo(state: EditorState, gizmo: RotateGizmoState): 
   const sh = getScreenHeight();
 
   // Hit test: approximate each circle as 16 line segments, check ray distance.
-  if (!gizmo.dragging && inViewport && isMouseButtonPressed(MouseButton.Left)) {
+  if (!gizmo.dragging && inViewport && isMouseButtonPressed(MouseButton.LEFT)) {
     const ray = mouseToWorldRay(state.camera, mx, my, sw, sh, state.viewportLeft, state.viewportTop, vw, vh);
     const pos = gizmo.anchor;
     const r = GIZMO_LENGTH;
@@ -83,7 +83,7 @@ export function updateRotateGizmo(state: EditorState, gizmo: RotateGizmoState): 
   }
 
   if (gizmo.dragging) {
-    if (isMouseButtonDown(MouseButton.Left)) {
+    if (isMouseButtonDown(MouseButton.LEFT)) {
       const angle = Math.atan2(my - sh / 2, mx - sw / 2);
       let delta = angle - gizmo.dragStartAngle;
 

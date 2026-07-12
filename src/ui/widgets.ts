@@ -66,10 +66,13 @@ export function labelSmall(ui: UiContext, text: string, color?: UiColor): void {
 
 export function separator(ui: UiContext): void {
   const y = ui.cursorY + Theme.spacing;
+  // drawLine takes (x1, y1, x2, y2, thickness, Color) — pass the Color object,
+  // not its four channels. Splatting the channels made the engine read `.r`
+  // off a number, yielding undefined and a native-ABI TypeError.
   drawLine(
     ui.panelX + Theme.padding, y,
     ui.panelX + ui.panelW - Theme.padding, y,
-    1, Theme.border.r, Theme.border.g, Theme.border.b, Theme.border.a,
+    1, Theme.border,
   );
   ui.cursorY = y + Theme.spacing * 2;
 }
@@ -269,8 +272,8 @@ export function vec3Field(
   ui: UiContext, id: string, labelText: string,
   ref: Ref<Vec3Lit>,
 ): boolean {
-  drawText(labelText, ui.cursorX, ui.cursorY + 4, Theme.fontSizeSmall, Theme.textDim);
-  ui.cursorY += Theme.fontSizeSmall + 2;
+  drawText(labelText, ui.cursorX, ui.cursorY, Theme.fontSizeSmall, Theme.textDim);
+  ui.cursorY += Theme.fontSizeSmall + Theme.spacing;
 
   const fw = (ui.panelW - Theme.padding * 2 - Theme.spacing * 2) / 3;
   const baseX = ui.cursorX;

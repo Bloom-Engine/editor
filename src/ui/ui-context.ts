@@ -67,10 +67,10 @@ export function createUiContext(): UiContext {
 export function uiBeginFrame(ui: UiContext): void {
   ui.mouseX = getMouseX();
   ui.mouseY = getMouseY();
-  ui.mouseDownLeft = isMouseButtonDown(MouseButton.Left);
-  ui.mousePressedLeft = isMouseButtonPressed(MouseButton.Left);
-  ui.mouseReleasedLeft = isMouseButtonReleased(MouseButton.Left);
-  ui.mouseDownRight = isMouseButtonDown(MouseButton.Right);
+  ui.mouseDownLeft = isMouseButtonDown(MouseButton.LEFT);
+  ui.mousePressedLeft = isMouseButtonPressed(MouseButton.LEFT);
+  ui.mouseReleasedLeft = isMouseButtonReleased(MouseButton.LEFT);
+  ui.mouseDownRight = isMouseButtonDown(MouseButton.RIGHT);
   ui.mouseDeltaX = getMouseDeltaX();
   ui.mouseDeltaY = getMouseDeltaY();
   ui.mouseWheel = getMouseWheel();

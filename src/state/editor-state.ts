@@ -11,7 +11,7 @@ import {
 // ---- sub-state types -------------------------------------------------------
 
 export type EntityId = string;
-export type ToolId = 'select' | 'place' | 'transform' | 'brush' | 'prefab' | 'water' | 'river';
+export type ToolId = 'select' | 'place' | 'transform' | 'brush' | 'prefab' | 'water' | 'river' | 'light';
 export type TransformMode = 'move' | 'rotate' | 'scale';
 
 export interface Project {
@@ -34,7 +34,16 @@ export interface ModelEntry {
   loaded: boolean;
 }
 
-export interface AssetCatalog {
+// NB: AssetCatalog and HandleMap are CLASSES, not interfaces, and that is
+// load-bearing. Perry 0.5.1208 miscompiles field access on an *interface*
+// that declares more than one `Map` field: the field reads back as garbage,
+// so `Array.from(handles.byEntity.values())` yielded bogus entries that then
+// blew up as `TypeError: Expected number for native f64 parameter` on the
+// first frame. Class fields resolve correctly. Full write-up + repro table:
+// docs/perry-map-size-av.md. Also: never read `.size` on a Map through a
+// property chain (still miscompiled even on classes) — count via keys()/a
+// parallel array. `Set.size` is safe.
+export class AssetCatalog {
   models: Map<string, ModelEntry>;    // Key = relPath.
   prefabs: Map<string, PrefabData>;   // Key = prefab id.
   modelOrder: string[];               // Stable iteration order for the panel.
@@ -42,11 +51,28 @@ export interface AssetCatalog {
   filter: string;                     // Substring filter for the asset panel.
   activeCategory: string;             // "all" or a category slug.
   activeTab: number;                  // 0 = Models, 1 = Prefabs.
+
+  constructor() {
+    this.models = new Map<string, ModelEntry>();
+    this.prefabs = new Map<string, PrefabData>();
+    this.modelOrder = [];
+    this.prefabOrder = [];
+    this.filter = '';
+    this.activeCategory = 'all';
+    this.activeTab = 0;
+  }
 }
 
+// What kind of thing the selection refers to. Entities, water volumes, and
+// rivers are stored in separate arrays in the world file and are not
+// interchangeable, so the selection has to say which array `primary` indexes
+// into — an id alone is ambiguous.
+export type SelectionKind = 'entity' | 'water' | 'river' | 'light';
+
 export interface Selection {
-  ids: Set<EntityId>;
-  primary: EntityId | null;           // The one showing the gizmo + inspector.
+  ids: Set<EntityId>;                 // Multi-select; entities only.
+  primary: string | null;             // The one showing the gizmo + inspector.
+  kind: SelectionKind;                // What `primary` is.
 }
 
 export interface OrbitCamera {
@@ -72,9 +98,15 @@ export interface BrushSettings {
   activeLayerIdx: number;              // Used by paint brush.
 }
 
-export interface HandleMap {
+// Class, not an interface — see the note on AssetCatalog above.
+export class HandleMap {
   byEntity: Map<EntityId, number>;     // SceneNodeHandle.
   byHandle: Map<number, EntityId>;
+
+  constructor() {
+    this.byEntity = new Map<EntityId, number>();
+    this.byHandle = new Map<number, EntityId>();
+  }
 }
 
 // ---- main state object -----------------------------------------------------
@@ -117,9 +149,13 @@ export interface EditorState {
   // Scene sync
   handles: HandleMap;
   terrainHandle: number;               // 0 if no terrain node exists.
+  // Water/river scene nodes, index-aligned with world.water / world.rivers.
+  waterHandles: number[];
+  riverHandles: number[];
   pendingRebuild: Set<EntityId>;
   pendingDestroy: Set<number>;         // SceneNodeHandles to destroy this frame.
   pendingTerrainRebuild: boolean;
+  pendingWaterRebuild: boolean;        // Any water/river add, edit, or removal.
   pendingEnvironmentSync: boolean;
 
   // Viewport
@@ -148,20 +184,12 @@ import { createEmptyWorld } from 'bloom/world';
 export function createEditorState(): EditorState {
   return {
     project: null,
-    catalog: {
-      models: new Map<string, ModelEntry>(),
-      prefabs: new Map<string, PrefabData>(),
-      modelOrder: [],
-      prefabOrder: [],
-      filter: '',
-      activeCategory: 'all',
-      activeTab: 0,
-    },
+    catalog: new AssetCatalog(),
     worldPath: null,
     world: createEmptyWorld('untitled', 'Untitled World'),
     editingPrefab: null,
     modified: false,
-    selection: { ids: new Set<EntityId>(), primary: null },
+    selection: { ids: new Set<EntityId>(), primary: null, kind: 'entity' },
     activeTool: 'select',
     transformMode: 'move',
     placeAssetRef: null,
@@ -184,14 +212,14 @@ export function createEditorState(): EditorState {
     undoStack: [],
     redoStack: [],
     maxHistory: 200,
-    handles: {
-      byEntity: new Map<EntityId, number>(),
-      byHandle: new Map<number, EntityId>(),
-    },
+    handles: new HandleMap(),
     terrainHandle: 0,
+    waterHandles: [],
+    riverHandles: [],
     pendingRebuild: new Set<EntityId>(),
     pendingDestroy: new Set<number>(),
     pendingTerrainRebuild: false,
+    pendingWaterRebuild: false,
     pendingEnvironmentSync: false,
     viewportLeft: 240,
     viewportRight: 1000,
@@ -199,6 +227,40 @@ export function createEditorState(): EditorState {
     viewportBottom: 776,
     playtesting: false,
   };
+}
+
+// ---- selection helpers -----------------------------------------------------
+
+// The selected entity id, or null when nothing is selected *or* the selection
+// is a water volume / river. Every entity-only path (gizmos, entity inspector,
+// duplicate, delete) goes through this so a selected river can never be fed to
+// code that assumes `world.entities`.
+export function selectedEntityId(state: EditorState): EntityId | null {
+  if (state.selection.kind !== 'entity') return null;
+  return state.selection.primary;
+}
+
+export function selectEntity(state: EditorState, id: EntityId | null): void {
+  state.selection.primary = id;
+  state.selection.kind = 'entity';
+}
+
+export function selectWater(state: EditorState, id: string): void {
+  state.selection.ids.clear();
+  state.selection.primary = id;
+  state.selection.kind = 'water';
+}
+
+export function selectRiver(state: EditorState, id: string): void {
+  state.selection.ids.clear();
+  state.selection.primary = id;
+  state.selection.kind = 'river';
+}
+
+export function selectLight(state: EditorState, id: string): void {
+  state.selection.ids.clear();
+  state.selection.primary = id;
+  state.selection.kind = 'light';
 }
 
 // ---- handle map helpers ----------------------------------------------------
@@ -226,7 +288,22 @@ export function handleOfEntity(map: HandleMap, id: EntityId): number {
   return h !== undefined ? h : 0;
 }
 
-// ---- next entity id --------------------------------------------------------
+// ---- id counters -------------------------------------------------------------
+
+// All id counters persist in world.metadata so they survive editor restarts.
+// A fresh in-memory counter would mint duplicate ids on a reopened world,
+// and commands find their targets by id — a duplicate makes undo remove the
+// wrong object.
+export function nextCounterId(state: EditorState, counterKey: string, prefix: string): string {
+  const current = state.world.metadata[counterKey];
+  let n = 1;
+  if (current !== undefined) {
+    n = parseInt(current);
+    if (n !== n) n = 1; // NaN guard
+  }
+  state.world.metadata[counterKey] = (n + 1).toString();
+  return prefix + n.toString();
+}
 
 export function nextEntityId(state: EditorState): string {
   const key = 'nextEntityId';

@@ -59,6 +59,38 @@ Everything below was verified by reading current source, not from stale docs. Co
 4. **Environment edits bypass the undo stack** — `environment-panel.ts` mutates `state.world.environment` directly and only sets dirty flags.
 5. **The brush silently creates terrain on flat worlds.** `src/tools/brush-tool.ts:66-68` assigns `defaultTerrain()` when `world.terrain` is null. Both shooter arenas have `terrain: null`; one stray B-keypress + click adds a 128×128 heightmap to a world that shouldn't have one, and the terrain creation itself is not undoable (only the stroke's height deltas are).
 
+### 1.2b Corrections & additional bugs (second audit, 2026-07-11, Windows/Perry 0.5.1208)
+
+Corrections to the audit above, verified against the actual files:
+
+- `arena_02` has **1** water volume (id `river`, a box volume standing in for the river), not 6; `rivers[]` is empty.
+- `enemy_spawner` entities carry only `userData.kind` — there are no `enemyType`/`waveBits`/`maxAlive`/`cooldown` keys (§1.5 overstates); the whole wave plan lives in `wave_config.userData.waves`. F1 stands, its acceptance example doesn't.
+- `loadRecentProjects` is not dead code (called from `addRecentProject`); the missing piece is UI that reads the list.
+- Autosave/Ctrl+S live in `main.ts`, not `world-io.ts`.
+
+Additional bugs found (fixed in the same pass as B1-B4):
+
+6. **Environment sky & fog edits were silent no-ops** — `syncEnvironment` never applied `skyColor`/`fogStart`/`fogEnd`. Fixed: clear color reads the world's sky each frame; fog maps to `setFog` with a density approximation.
+7. **Directional light accumulated** — `addDirectionalLight` per env sync stacked lights. Fixed: `setDirectionalLight` re-applied every frame (begin_frame resets the lighting block anyway — same reason the shooter re-sets sun/ambient per frame).
+8. **Water/river id counters reset per launch** → duplicate ids on reopened worlds made `AddWaterCommand.undo` remove the wrong volume. Fixed: counters persist in `world.metadata` (like `nextEntityId`) with a collision guard.
+9. **Backspace deleted the selected entity** — latent footgun for text fields. Fixed: Delete only, and only while no widget is active.
+10. **Entity with both modelRef and prefabRef double-bound and leaked a node.** Fixed: prefab branch takes precedence, single bind.
+11. **Entity tints rendered near-black in the editor** — `sync.ts` passed 0-1 world tints straight into `setSceneNodeColor`, which expects 0-255 (see `applyTint` in the engine loader). Fixed.
+
+✅ **Why the editor never started on Windows: it was written against an engine API that doesn't exist.** Three separate mismatches, each producing the same `TypeError: Expected number for native f64 parameter` on the first frame — an `undefined` reaching a native `f64` parameter:
+
+1. **Key constants.** The editor used `Key.LeftControl` / `LeftSuper` / `Escape` / `Delete` / `Space` / `LeftShift` / `RightShift`; the engine (`engine/src/core/keys.ts`) spells them `LEFT_CONTROL`, `LEFT_SUPER`, `ESCAPE`, `DELETE`, `SPACE`, `LEFT_SHIFT`, `RIGHT_SHIFT`. Letters (`Key.Z`) were correct, which hid the pattern.
+2. **Mouse buttons.** `MouseButton.Left/Right/Middle` → engine has `LEFT/RIGHT/MIDDLE`.
+3. **`drawLine` arity.** `widgets.ts:separator()` called `drawLine(x1,y1,x2,y2, 1, color.r, color.g, color.b, color.a)`, but the engine signature is `(x1, y1, x2, y2, thickness, Color)` — so it read `.r` off the number `1` and got `undefined`. This one only fires on the first panel that draws a separator, which is why it surfaced last.
+
+4. **`setSceneNodeTransform` / `updateSceneNodeGeometry` were unreachable from TypeScript.** Both take their arrays through `i64` pointer params, and Perry 0.5.x refuses to pass a `number[]` into an `i64` ("Expected safe integer for native i64 parameter"). The engine had already worked around this for meshes (the `bloom_mesh_scratch_*` buffers) but never migrated the scene-graph pair — the shooter uses `setSceneNodeTrs` (all-scalar) so nobody hit it, while the editor needs full matrices (non-uniform scale: a boundary wall is 40×4×0.5). **Fixed in the engine** (additive, nothing else changes): new `bloom_scene_set_transform16` (17 scalars, stateless) and `bloom_scene_update_geometry_scratch` (re-uses the mesh scratch); the TS wrappers now route through them, and the stale "prefer setSceneNodeTrs until the scratch migration lands" note in `engine/src/scene/index.ts` is now true history.
+
+All fixed. Perry does not type-check missing members on these `const` objects, so none of this failed at compile time. **Perry's reported stack line was flat wrong** (it blamed `sync.ts:383` for a fault in `main.ts`'s input block) — trust `console.error` breadcrumbs, not the line attribution. An engine-API audit of the remaining call sites (`drawRay`/`drawCube`/`drawText`/scene calls) found no further mismatches.
+
+⚠️ **Separately: Perry 0.5.1208 miscompiles `Map` fields on an interface** — a real bug, found while chasing the above, though it was *not* what broke the editor. Reading `.size` on a `Map` field of an interface access-violates once the program declares more than one such field; `Set.size` and class fields are fine. `AssetCatalog` and `HandleMap` are now classes as a precaution, and no code reads `Map.size` through a property chain. Full repro table + rules: **`docs/perry-map-size-av.md`** — read it before adding a `Map` to editor state, and report upstream.
+
+Traps recorded so nobody re-pays for them: Perry's **stdout is block-buffered and lost on a native crash** (use `console.error`); a debug line printing `someMap.size` *introduces* an access violation of its own (the instrumentation became the bug for hours); and `loadAssetCatalog` takes ~20 s here for the shooter's 26 GLBs (the "&lt;1 s" comment in that file is macOS-calibrated) — the black window at startup is loading, not a hang. Async/lazy catalog loading deserves a follow-up.
+
 ### 1.3 Dead code — written but unreachable (all verified by grep: zero call sites)
 
 | Code | What's missing to reach it |
@@ -131,13 +163,40 @@ Tasks are grouped, not phased — everything ships. Order within reason: **A →
 - **B3.** Make terrain creation explicit and undoable: replace the silent `defaultTerrain()` in `brush-tool.ts:66-68` with either (a) a "Create terrain" button in the brush panel issuing a `CreateTerrainCommand`, or (b) folding terrain creation into the stroke command's undo state so Ctrl+Z after a first-stroke removes the terrain entirely. Either way, `world.terrain` must return to `null` on undo.
 - **B4.** Cache the prefab registry in `syncRebuilds` (currently rebuilt per entity per frame, `sync.ts:83-87`); invalidate on catalog changes. Remove the dead `label` imports.
 
-### C. Water & rivers, end-to-end
+### C. Water & rivers, end-to-end — ✅ DONE (2026-07-11)
+
+Landed. Notes that differ from the plan as written:
+
+- **`genMeshSplineRibbon` was also unreachable** from TypeScript — same i64-pointer problem as the scene transform (the plan assumed it was ready to use). Added `bloom_gen_mesh_spline_ribbon_scratch`; the wrapper now pushes points then widths through the mesh scratch.
+- Shared helpers live in **`engine/src/world/render.ts`** (`spawnWaterVolume`, `spawnRiver`) and are called by both `instantiateWorld` and the editor's sync layer, so a river cannot look different in-game than in the editor. The 0-1 → 0-255 colour conversion happens there, once. The stale "pending Q8/Q9" warnings are gone.
+- `InstantiateResult` reports `waterHandles` / `riverHandles` as **arrays, not Maps**, index-aligned with `world.water` / `world.rivers` — it already had one `Map`, and a second would have tripped the Perry interface-Map miscompile documented in `docs/perry-map-size-av.md`.
+- Selection is now `{ primary, kind: 'entity' | 'water' | 'river' }`. Entity-only paths (gizmos, entity inspector, duplicate, frame-on-selection, outline) go through `selectedEntityId()`, which returns null for a water/river selection, so a selected river can never be handed to code that assumes `world.entities`.
+- Outliner lists **Water and Rivers above Entities** — the panel does not scroll, and a world with 66 entities would otherwise bury them below the fold permanently.
+- Delete removes the selected water/river (undo restores it at its original index, so ordering round-trips). Edits coalesce per drag like entity transforms.
+- Creation defaults (`WATER_DEFAULTS`, `RIVER_DEFAULTS`) replace the previously hardcoded constants.
+
+Still open from C: dragging a **gizmo** on a water volume (move/scale writes `center`/`size`) and per-control-point river handles. Both are editable numerically in the inspector today.
+
+### C. Water & rivers, end-to-end (original plan)
 
 - **C1. Engine: real spawning in `instantiateWorld`** (`../engine/src/world/loader.ts:152-160`). Create a shared helper module (e.g. `../engine/src/world/render.ts`) with `spawnWaterVolume(v)` — scene node + box mesh sized to `v.size` at `v.center` (top face at `surfaceHeight`), `setSceneNodeWaterMaterial` with `waveAmplitude`/`waveSpeed` and **color converted 0-1 → 0-255** — and `spawnRiver(r)` — sample the Catmull-Rom spline through `controlPoints` (interpolate per-point `widths`), feed `genMeshSplineRibbon`, offset down by `depth`, water material. Replace the two TODO warnings with actual spawns; return handles in the instantiate result. Delete the stale "Q8/Q9" comments. Acceptance: garden (or a test scene) instantiating a world with water/rivers shows them.
 - **C2. Editor: render through the same helpers** in `sync.ts` (new `syncWater`/`syncRivers` driven by pending-flags, mirroring entities), replacing the water tool's translucent debug cubes and the river tool's debug lines. Keep an editor-only selected-highlight overlay.
 - **C3. Selection model generalization.** Extend selection (currently entity-id-only) to `{ kind: 'entity'|'water'|'river', id }`. Register water/river scene nodes in the picking map; list them in outliner sections; support delete (new `RemoveWaterCommand`/`RemoveRiverCommand`), and move (gizmo translates `water.center` / river control points; render draggable point handles for a selected river; scale gizmo edits `water.size`). All undoable.
 - **C4. Inspector sections**: water (`surfaceHeight`, color, `waveAmplitude`, `waveSpeed`) and river (`depth`, `flowSpeed`, color, per-point width), editable, undoable (coalesced drag commands like `TransformEntityCommand`).
 - **C5. Toolbar buttons** for water and river next to the existing four (`toolbar.ts:46-51`), plus creation-defaults fields (e.g. in the brush-panel pattern) so new volumes/splines aren't hardcoded.
+
+### Schema v2 — first-class point lights — ✅ DONE (2026-07-11)
+
+Not in the original plan; added because the editor could not light its own preview.
+
+In v1, a light was an *entity* carrying `userData.kind = "point_light"` plus `range` / `color` / `intensity` strings — a private convention between one game and its baker. The editor saw an entity with no model (an invisible, unlit marker), and every new game would have re-invented the same convention. Sun, ambient, and fog were already first-class in `environment`; point lights now sit beside them in a top-level `lights: LightData[]`.
+
+The dividing line, for future schema questions: **lights are engine-universal — every renderer knows what a point light is — so they are schema. A spawner or a wave plan means nothing without the game, so it stays `userData`.** The editor stays game-agnostic either way.
+
+- `WORLD_SCHEMA_VERSION = 2`; `migrateWorldData` lifts v1 `point_light` entities into `world.lights` on load, so old worlds keep working untouched. Covered by self-tests (id/position/colour/range/intensity carried over, non-light entities untouched, v2 worlds left alone, result validates).
+- `applyWorldLights(world)` in `world/render.ts` must be called **every frame** — the renderer clears its lighting block in `begin_frame`, the same reason games re-apply sun and ambient. Calling it once at load lights the world for exactly one frame.
+- Editor: Light tool (click to place), Lights section in the outliner, inspector (position / colour / intensity / range), delete with index-preserving undo, and a wire marker at each light plus a range sphere when selected — a light has no mesh, so without markers you cannot see or click one.
+- Shooter: `arena_02` migrated to v2 (5 lights lifted out of `entities`); its baker reads `world.lights` and still falls back to the v1 entity form. **The generated runtime data is byte-identical apart from one comment** — the migration is semantically a no-op for the game.
 
 ### D. Terrain paint & layers
 

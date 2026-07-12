@@ -2,7 +2,7 @@
 // Changes apply live via the pendingEnvironmentSync flag.
 
 import { UiContext } from '../ui-context';
-import { beginPanel, endPanel, label, separator, dragFloat, vec3Field, toggleButton, Ref } from '../widgets';
+import { beginPanel, endPanel, separator, dragFloat, vec3Field, toggleButton, Ref } from '../widgets';
 import { Theme } from '../theme';
 import { EditorState } from '../../state/editor-state';
 import { Vec3Lit } from 'bloom/world';

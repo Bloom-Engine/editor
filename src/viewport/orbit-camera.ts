@@ -24,7 +24,7 @@ export function updateOrbitCamera(state: EditorState): void {
   const wheel = getMouseWheel();
 
   // Rotate (right-mouse drag).
-  if (isMouseButtonDown(MouseButton.Right)) {
+  if (isMouseButtonDown(MouseButton.RIGHT)) {
     cam.yaw -= dx * ROTATE_SPEED;
     cam.pitch -= dy * ROTATE_SPEED;
     if (cam.pitch < MIN_PITCH) cam.pitch = MIN_PITCH;
@@ -33,7 +33,7 @@ export function updateOrbitCamera(state: EditorState): void {
   }
 
   // Pan (middle-mouse drag). Move the target in the camera's local XY plane.
-  if (isMouseButtonDown(MouseButton.Middle)) {
+  if (isMouseButtonDown(MouseButton.MIDDLE)) {
     const speed = cam.distance * PAN_SPEED;
     const cosYaw = Math.cos(cam.yaw);
     const sinYaw = Math.sin(cam.yaw);

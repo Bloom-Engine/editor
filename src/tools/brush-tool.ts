@@ -9,7 +9,7 @@
 // both the before and after snapshots. Undo restores the before snapshot.
 
 import { isMouseButtonDown, isMouseButtonPressed, isMouseButtonReleased, MouseButton, getMouseX, getMouseY, getScreenWidth, getScreenHeight, getDeltaTime } from 'bloom';
-import { raycastTerrain, defaultTerrain, TerrainData } from 'bloom/world';
+import { raycastTerrain, TerrainData } from 'bloom/world';
 import { EditorState } from '../state/editor-state';
 import { runCommand } from '../state/commands';
 import { mouseToWorldRay } from '../viewport/ray';
@@ -63,11 +63,10 @@ export function updateBrushTool(state: EditorState): void {
     return;
   }
 
-  // Ensure the world has terrain.
-  if (!state.world.terrain) {
-    state.world.terrain = defaultTerrain();
-    state.pendingTerrainRebuild = true;
-  }
+  // No terrain — sculpting requires explicit creation first (the brush
+  // panel's "Create terrain" button, an undoable command). Silently creating
+  // one here would corrupt terrain-less worlds on a stray click.
+  if (!state.world.terrain) return;
 
   const terrain = state.world.terrain as TerrainData;
   const mx = getMouseX();
@@ -88,19 +87,19 @@ export function updateBrushTool(state: EditorState): void {
   if (!hit.hit) return;
 
   // Start stroke.
-  if (isMouseButtonPressed(MouseButton.Left)) {
+  if (isMouseButtonPressed(MouseButton.LEFT)) {
     brushState.stroking = true;
     brushState.heightsSnapshot = terrain.heights.slice();
   }
 
   // Apply brush while mouse is held.
-  if (brushState.stroking && isMouseButtonDown(MouseButton.Left)) {
+  if (brushState.stroking && isMouseButtonDown(MouseButton.LEFT)) {
     applyBrush(state, terrain, hit.cellX, hit.cellZ);
     state.pendingTerrainRebuild = true;
   }
 
   // End stroke.
-  if (brushState.stroking && isMouseButtonReleased(MouseButton.Left)) {
+  if (brushState.stroking && isMouseButtonReleased(MouseButton.LEFT)) {
     endStroke(state);
   }
 }

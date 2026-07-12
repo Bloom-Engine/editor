@@ -4,7 +4,7 @@
 
 import { drawRay, drawCube, getMouseX, getMouseY, isMouseButtonDown, isMouseButtonPressed, getScreenWidth, getScreenHeight, MouseButton } from 'bloom';
 import { TransformData, Vec3Lit } from 'bloom/world';
-import { EditorState } from '../state/editor-state';
+import { EditorState, selectedEntityId } from '../state/editor-state';
 import { TransformEntityCommand } from '../state/commands/transform-entity';
 import { runCommand } from '../state/commands';
 import { mouseToWorldRay, raySegmentDistance } from '../viewport/ray';
@@ -29,14 +29,14 @@ export function createScaleGizmoState(): ScaleGizmoState {
 }
 
 export function updateScaleGizmo(state: EditorState, gizmo: ScaleGizmoState): void {
-  if (state.playtesting || state.selection.primary === null ||
+  if (state.playtesting || selectedEntityId(state) === null ||
       state.activeTool !== 'transform' || state.transformMode !== 'scale') {
     gizmo.visible = false;
     gizmo.dragging = false;
     return;
   }
 
-  const entity = state.world.entities.find(e => e.id === state.selection.primary);
+  const entity = state.world.entities.find(e => e.id === selectedEntityId(state));
   if (!entity) { gizmo.visible = false; return; }
 
   gizmo.visible = true;
@@ -51,7 +51,7 @@ export function updateScaleGizmo(state: EditorState, gizmo: ScaleGizmoState): vo
   const sw = getScreenWidth();
   const sh = getScreenHeight();
 
-  if (!gizmo.dragging && inViewport && isMouseButtonPressed(MouseButton.Left)) {
+  if (!gizmo.dragging && inViewport && isMouseButtonPressed(MouseButton.LEFT)) {
     const ray = mouseToWorldRay(state.camera, mx, my, sw, sh, state.viewportLeft, state.viewportTop, vw, vh);
     const pos = gizmo.anchor;
     const len = GIZMO_LENGTH;
@@ -81,7 +81,7 @@ export function updateScaleGizmo(state: EditorState, gizmo: ScaleGizmoState): vo
   }
 
   if (gizmo.dragging) {
-    if (isMouseButtonDown(MouseButton.Left)) {
+    if (isMouseButtonDown(MouseButton.LEFT)) {
       const delta = (mx - gizmo.dragStartX) * 0.01;
       const startScl = (gizmo.dragStartTransform as TransformData).scale;
       const scl: Vec3Lit = [startScl[0], startScl[1], startScl[2]];

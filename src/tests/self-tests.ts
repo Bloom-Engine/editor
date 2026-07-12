@@ -1,14 +1,22 @@
-// Self-tests — run via bloom-editor --test (check for arg in main.ts).
-// Prints PASS/FAIL for each test, exits with nonzero on any failure.
+// Self-tests — run via `bloom-editor --test` (wired in main.ts, which exits
+// nonzero on any failure). Prints each failing assertion by name plus a
+// pass/fail summary; runSelfTests returns the failure count.
 
-import { WorldData, PrefabData, createEmptyWorld, createEntity } from 'bloom/world';
+import { WorldData, PrefabData, WaterVolume, createEmptyWorld, createEntity } from 'bloom/world';
 import { validateWorld, validatePrefab } from 'bloom/world';
+import { migrateWorldData } from 'bloom/world';
 import { buildHeightmapMesh, sampleHeight, defaultTerrain } from 'bloom/world';
 import { expandPrefab, createPrefabRegistry, registerPrefab, PrefabLeaf } from 'bloom/world';
-import { createEditorState } from '../state/editor-state';
+import {
+  createEditorState, nextCounterId,
+  selectedEntityId, selectEntity, selectRiver,
+} from '../state/editor-state';
+import { EditWaterCommand, RemoveWaterCommand } from '../state/commands/edit-water';
 import { runCommand, undo, redo } from '../state/commands';
 import { CreateEntityCommand } from '../state/commands/create-entity';
 import { TransformEntityCommand } from '../state/commands/transform-entity';
+import { CreateTerrainCommand } from '../state/commands/create-terrain';
+import { SetUserDataCommand } from '../state/commands/set-userdata';
 
 let passed = 0;
 let failed = 0;
@@ -18,17 +26,28 @@ function assert(condition: boolean, name: string): void {
     passed++;
   } else {
     failed++;
+    console.log('FAIL: ' + name);
   }
 }
 
 export function runSelfTests(): number {
+  passed = 0;
+  failed = 0;
+
   testWorldRoundTrip();
   testValidation();
   testTerrainBilinearSample();
   testPrefabCycleDetection();
   testPrefabExpansion();
   testCommandUndoRedo();
+  testMapSize();
+  testCreateTerrainUndo();
+  testCounterIds();
+  testUserDataCommand();
+  testWaterCommands();
+  testLightMigration();
 
+  console.log('self-tests: ' + passed + ' passed, ' + failed + ' failed');
   return failed;
 }
 
@@ -122,6 +141,159 @@ function testPrefabExpansion(): void {
   assert(leaves.length === 3, 'expand: 3 leaves');
   assert(leaves[0].modelRef === 'wall.glb', 'expand: first leaf is wall');
   assert(leaves[2].modelRef === 'roof.glb', 'expand: third leaf is roof');
+}
+
+function testMapSize(): void {
+  // Regression probe: Map.size at editor startup coincided with a native
+  // access violation (0xc0000005) on Perry 0.5.1208 — keep this canary.
+  const m = new Map<string, number>();
+  assert(m.size === 0, 'map: empty size');
+  m.set('a', 1);
+  m.set('b', 2);
+  assert(m.size === 2, 'map: size after set');
+  m.delete('a');
+  assert(m.size === 1, 'map: size after delete');
+  // The editor AV'd specifically on string + Map.size concatenation.
+  const viaLocal = m.size;
+  assert(('n=' + viaLocal) === 'n=1', 'map: size concat via local');
+  assert(('n=' + m.size) === 'n=1', 'map: size concat direct');
+  console.log('map-size concat survived: n=' + m.size);
+}
+
+function testCreateTerrainUndo(): void {
+  const state = createEditorState();
+  assert(state.world.terrain === null, 'terrain cmd: starts null');
+
+  runCommand(state, new CreateTerrainCommand());
+  assert(state.world.terrain !== null, 'terrain cmd: created');
+
+  undo(state);
+  assert(state.world.terrain === null, 'terrain cmd: undo returns terrain to null');
+
+  redo(state);
+  assert(state.world.terrain !== null, 'terrain cmd: redo re-creates');
+}
+
+function testCounterIds(): void {
+  const state = createEditorState();
+  const a = nextCounterId(state, 'nextWaterId', 'water_');
+  const b = nextCounterId(state, 'nextWaterId', 'water_');
+  assert(a === 'water_1', 'counter: first id');
+  assert(b === 'water_2', 'counter: second id');
+  assert(state.world.metadata['nextWaterId'] === '3', 'counter: persists in world metadata');
+}
+
+function testUserDataCommand(): void {
+  const state = createEditorState();
+  runCommand(state, new CreateEntityCommand(createEntity('ud_ent', 'x.glb', [0, 0, 0])));
+
+  runCommand(state, new SetUserDataCommand('ud_ent', 'cooldown', null, '5'));
+  assert(state.world.entities[0].userData['cooldown'] === '5', 'userdata: set');
+
+  runCommand(state, new SetUserDataCommand('ud_ent', 'cooldown', '5', '8'));
+  assert(state.world.entities[0].userData['cooldown'] === '8', 'userdata: edit');
+
+  undo(state);
+  assert(state.world.entities[0].userData['cooldown'] === '5', 'userdata: undo restores previous value');
+
+  runCommand(state, new SetUserDataCommand('ud_ent', 'cooldown', '5', null));
+  assert(state.world.entities[0].userData['cooldown'] === undefined, 'userdata: remove');
+
+  undo(state);
+  assert(state.world.entities[0].userData['cooldown'] === '5', 'userdata: undo restores removed key');
+}
+
+function testWaterCommands(): void {
+  const state = createEditorState();
+  const volume: WaterVolume = {
+    id: 'water_1',
+    kind: 'box',
+    center: [0, -1, 0],
+    size: [10, 2, 10],
+    surfaceHeight: 0.5,
+    color: [0.2, 0.5, 0.8, 0.6],
+    waveAmplitude: 0.1,
+    waveSpeed: 1.0,
+  };
+  state.world.water.push(volume);
+
+  // Edit coalescing: two drags on the same volume are one undo entry.
+  const before = { ...volume, center: [0, -1, 0] as [number, number, number], size: [10, 2, 10] as [number, number, number], color: [0.2, 0.5, 0.8, 0.6] as [number, number, number, number] };
+  const mid = { ...before, waveSpeed: 2.0 };
+  runCommand(state, new EditWaterCommand('water_1', before, mid));
+  const after = { ...before, waveSpeed: 3.0 };
+  runCommand(state, new EditWaterCommand('water_1', mid, after));
+  assert(state.world.water[0].waveSpeed === 3.0, 'water: edit applied');
+  assert(state.undoStack.length === 1, 'water: consecutive edits coalesce into one undo entry');
+
+  undo(state);
+  assert(state.world.water[0].waveSpeed === 1.0, 'water: undo restores the pre-drag value');
+
+  // Removal restores at the original index, so ordering round-trips.
+  state.world.water.push({ ...volume, id: 'water_2' });
+  runCommand(state, new RemoveWaterCommand(state.world.water[0], 0));
+  assert(state.world.water.length === 1, 'water: removed');
+  assert(state.world.water[0].id === 'water_2', 'water: the right one was removed');
+
+  undo(state);
+  assert(state.world.water.length === 2, 'water: remove undone');
+  assert(state.world.water[0].id === 'water_1', 'water: restored at its original index');
+
+  // Selecting a river must not let entity-only paths act on it.
+  selectRiver(state, 'river_1');
+  assert(selectedEntityId(state) === null, 'selection: a river is not an entity selection');
+  selectEntity(state, 'ent_1');
+  assert(selectedEntityId(state) === 'ent_1', 'selection: entity selection reads back');
+}
+
+// Schema v1 carried point lights as entities with userData.kind='point_light'.
+// migrateWorldData must lift them into world.lights and drop them from
+// entities, without touching anything else — this runs on every load of an old
+// world, so a bug here silently mangles worlds.
+function testLightMigration(): void {
+  const world = createEmptyWorld('t', 'T') as any;
+  world.schemaVersion = 1;
+  world.lights = undefined;
+
+  const lightEnt = createEntity('light_a', '', [3, 4, 5]);
+  lightEnt.userData = {
+    kind: 'point_light',
+    range: '18',
+    color: '1.0, 0.5, 0.25',
+    intensity: '2.5',
+  };
+  const propEnt = createEntity('prop_a', 'models/crate.glb', [1, 0, 1]);
+
+  world.entities.push(lightEnt);
+  world.entities.push(propEnt);
+
+  const migrated = migrateWorldData(world as WorldData);
+
+  assert(migrated.schemaVersion === 2, 'migration: schemaVersion bumped to 2');
+  assert(migrated.lights.length === 1, 'migration: one light lifted');
+  assert(migrated.entities.length === 1, 'migration: light removed from entities');
+  assert(migrated.entities[0].id === 'prop_a', 'migration: non-light entity untouched');
+
+  const l = migrated.lights[0];
+  assert(l.id === 'light_a', 'migration: light id preserved');
+  assert(l.kind === 'point', 'migration: light kind');
+  assert(l.position[0] === 3 && l.position[1] === 4 && l.position[2] === 5, 'migration: position carried over');
+  assert(l.range === 18, 'migration: range parsed from userData');
+  assert(l.intensity === 2.5, 'migration: intensity parsed from userData');
+  assert(Math.abs(l.color[0] - 1.0) < 0.001 && Math.abs(l.color[1] - 0.5) < 0.001,
+    'migration: color parsed from "r, g, b" string');
+
+  // A v2 world must pass through untouched (migration is not re-run).
+  const already = createEmptyWorld('t2', 'T2');
+  already.lights.push({
+    id: 'l1', name: 'l1', kind: 'point',
+    position: [0, 1, 0], color: [1, 1, 1], intensity: 1, range: 5,
+  });
+  const again = migrateWorldData(already);
+  assert(again.lights.length === 1, 'migration: v2 world is left alone');
+
+  const v = validateWorld(again);
+  assert(v.ok === true, 'migration: migrated world validates');
 }
 
 function testCommandUndoRedo(): void {

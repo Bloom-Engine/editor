@@ -1,7 +1,11 @@
 node_modules/
 dist/
 /main
+/main.exe
+/main.pdb
 /bloom-editor
+/bloom-editor.exe
+/bloom-editor.pdb
 .DS_Store
 *.log
 .claude/
