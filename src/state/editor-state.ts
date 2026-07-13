@@ -21,6 +21,7 @@ export interface Project {
   modelsDir: string;         // Resolved absolute.
   prefabsDir: string;
   worldsDir: string;
+  texturesDir: string;         // Splat-layer source textures.
   defaultWorld: string;
   /// Optional: the game binary to launch for play-in-editor. Empty = no Play button.
   playCommand: string;
@@ -50,6 +51,7 @@ export class AssetCatalog {
   prefabs: Map<string, PrefabData>;   // Key = prefab id.
   modelOrder: string[];               // Stable iteration order for the panel.
   prefabOrder: string[];
+  textureOrder: string[];             // relPaths under texturesDir; splat-layer sources.
   filter: string;                     // Substring filter for the asset panel.
   activeCategory: string;             // "all" or a category slug.
   activeTab: number;                  // 0 = Models, 1 = Prefabs.
@@ -59,6 +61,7 @@ export class AssetCatalog {
     this.prefabs = new Map<string, PrefabData>();
     this.modelOrder = [];
     this.prefabOrder = [];
+    this.textureOrder = [];
     this.filter = '';
     this.activeCategory = 'all';
     this.activeTab = 0;

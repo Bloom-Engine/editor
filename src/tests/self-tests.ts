@@ -6,6 +6,7 @@ import { WorldData, PrefabData, WaterVolume, createEmptyWorld, createEntity } fr
 import { validateWorld, validatePrefab } from 'bloom/world';
 import { migrateWorldData } from 'bloom/world';
 import { buildHeightmapMesh, sampleHeight, defaultTerrain } from 'bloom/world';
+import { createTerrainLayer, quantizeWeight, terrainLayerMaskColor } from 'bloom/world';
 import { expandPrefab, createPrefabRegistry, registerPrefab, PrefabLeaf } from 'bloom/world';
 import {
   createEditorState, nextCounterId,
@@ -17,6 +18,10 @@ import { CreateEntityCommand } from '../state/commands/create-entity';
 import { TransformEntityCommand } from '../state/commands/transform-entity';
 import { CreateTerrainCommand } from '../state/commands/create-terrain';
 import { SetUserDataCommand } from '../state/commands/set-userdata';
+import {
+  AddTerrainLayerCommand, RemoveTerrainLayerCommand, TerrainPaintCommand, snapshotWeights,
+} from '../state/commands/terrain-paint';
+import { paintCell } from '../tools/brush-tool';
 import {
   enterNewPrefabMode, enterPrefabEditMode, exitPrefabMode, wouldCycle,
 } from '../tools/prefab-tool';
@@ -53,6 +58,9 @@ export function runSelfTests(): number {
   testUserDataCommand();
   testWaterCommands();
   testLightMigration();
+  testSplatLayerCommands();
+  testSplatPaintPartition();
+  testSplatMaskPreview();
 
   console.log('self-tests: ' + passed + ' passed, ' + failed + ' failed');
   return failed;
@@ -440,4 +448,129 @@ function testPathJoinIdentity(): void {
   const catalogKey = joinPath(joinPath('.', 'assets/models'), 'prop_tree.glb');
   assert(catalogKey === 'assets/models/prop_tree.glb',
     'paths: catalog key MATCHES the world modelRef');
+}
+
+// ---- Splat layers (PLAN §D) -------------------------------------------------
+
+// Add / remove / paint, and what undo owes you afterwards.
+//
+// The one that matters: removing a PAINTED layer and undoing must give the paint
+// back. A remove that only remembered the layer's name and texture would undo to
+// a layer that is correctly named, correctly textured, and blank — and the paint
+// would be gone with no error anywhere.
+function testSplatLayerCommands(): void {
+  const state = createEditorState();
+  runCommand(state, new CreateTerrainCommand());
+  const t = state.world.terrain as any;
+  const cells = t.width * t.depth;
+
+  runCommand(state, new AddTerrainLayerCommand('grass', 'assets/textures/g.png', 1.0));
+  assert(t.layers.length === 1, 'splat: layer added');
+  assert(t.layers[0].weights.length === cells, 'splat: weights sized to the grid');
+  assert(t.layers[0].weights[0] === 0, 'splat: a new layer starts unpainted');
+  assert(state.brush.activeLayerIdx === 0, 'splat: the new layer is selected');
+
+  runCommand(state, new AddTerrainLayerCommand('rock', 'assets/textures/r.png', 1.0));
+  assert(t.layers.length === 2 && state.brush.activeLayerIdx === 1, 'splat: second layer selected');
+
+  // Paint layer 1 (rock) into cell 5, through a real command.
+  const before = snapshotWeights(t.layers);
+  paintCell(t.layers, 1, 5, 1.0, 1.0);
+  runCommand(state, new TerrainPaintCommand(before, snapshotWeights(t.layers)));
+  assert(t.layers[1].weights[5] === 1, 'splat: paint wrote the active layer');
+
+  undo(state);
+  assert(t.layers[1].weights[5] === 0, 'splat: undo reverts the stroke');
+  redo(state);
+  assert(t.layers[1].weights[5] === 1, 'splat: redo replays the stroke');
+
+  // Remove the painted layer, then undo. The paint must come back.
+  runCommand(state, new RemoveTerrainLayerCommand(1));
+  assert(t.layers.length === 1, 'splat: layer removed');
+  assert(state.brush.activeLayerIdx === 0, 'splat: selection clamped after removal');
+  undo(state);
+  assert(t.layers.length === 2, 'splat: undo restores the layer');
+  assert(t.layers[1].weights[5] === 1, 'splat: undo restores the layer WITH its paint');
+
+  // Undoing an add must not leave the brush pointing past the end of the list.
+  runCommand(state, new AddTerrainLayerCommand('dirt', 'assets/textures/d.png', 1.0));
+  assert(state.brush.activeLayerIdx === 2, 'splat: third layer selected');
+  undo(state);
+  assert(t.layers.length === 2, 'splat: undo removes the added layer');
+  assert(state.brush.activeLayerIdx < t.layers.length, 'splat: activeLayerIdx stays in range');
+}
+
+// A splat is a partition of unity. If the weights at a cell can sum past 1, the
+// shader blends 90% grass with 90% rock and the terrain goes uniformly grey —
+// which looks like a lighting bug and is not one.
+function testSplatPaintPartition(): void {
+  const t = defaultTerrain();
+  const layers = [
+    createTerrainLayer(t, 'a', 'a.png', 1),
+    createTerrainLayer(t, 'b', 'b.png', 1),
+    createTerrainLayer(t, 'c', 'c.png', 1),
+  ];
+  const idx = 42;
+
+  // Fill the cell with b, then paint a over it at full strength.
+  paintCell(layers, 1, idx, 1.0, 1.0);
+  assert(layers[1].weights[idx] === 1, 'partition: b painted to 1');
+  paintCell(layers, 0, idx, 1.0, 1.0);
+  assert(layers[0].weights[idx] === 1, 'partition: a painted to 1');
+  assert(layers[1].weights[idx] === 0, 'partition: a fully displaced b');
+
+  // A partial dab must leave the total at exactly 1, not above it.
+  const l2 = [
+    createTerrainLayer(t, 'a', 'a.png', 1),
+    createTerrainLayer(t, 'b', 'b.png', 1),
+  ];
+  paintCell(l2, 1, idx, 1.0, 1.0);       // b = 1
+  paintCell(l2, 0, idx, 1.0, 0.25);      // a = 0.25 -> b must fall to 0.75
+  const sum = l2[0].weights[idx] + l2[1].weights[idx];
+  assert(Math.abs(sum - 1.0) < 0.002, 'partition: weights sum to 1 after a partial dab (got ' + sum + ')');
+  assert(Math.abs(l2[1].weights[idx] - 0.75) < 0.002, 'partition: b scaled proportionally');
+
+  // Erase drives the active layer to 0 and does NOT push the others back up —
+  // falling coverage is what lets the game blend back to its procedural base.
+  paintCell(l2, 0, idx, 0.0, 1.0);
+  assert(l2[0].weights[idx] === 0, 'partition: erase zeroes the active layer');
+  assert(Math.abs(l2[1].weights[idx] - 0.75) < 0.002, 'partition: erase leaves the others alone');
+  const cov = l2[0].weights[idx] + l2[1].weights[idx];
+  assert(cov < 1.0, 'partition: erasing lowers total coverage');
+
+  // Quantization is what keeps the world file from becoming a megabyte of noise.
+  assert(quantizeWeight(0.5019607843137255) === 0.502, 'partition: weights quantize to 3dp');
+  assert(quantizeWeight(-1) === 0 && quantizeWeight(2) === 1, 'partition: weights clamp to 0..1');
+}
+
+// The editor's paint preview is the heightmap mesh's vertex colour. If that
+// stays grey no matter what you paint, the paint tool is invisible and therefore
+// useless — so pin it.
+function testSplatMaskPreview(): void {
+  const t = defaultTerrain();
+  const bare = buildHeightmapMesh(t);
+  const STRIDE = 12;
+  const r0 = bare.vertices[6];  // vertex 0, colour R
+
+  t.layers = [createTerrainLayer(t, 'rock', 'rock.png', 1)];
+  const unpainted = buildHeightmapMesh(t);
+  assert(unpainted.vertices[6] === r0,
+    'mask: adding an unpainted layer does not change the terrain');
+
+  // Paint layer 0 fully at cell 0. Vertex 0's colour must become the mask colour.
+  t.layers[0].weights[0] = 1.0;
+  const painted = buildHeightmapMesh(t);
+  const want = terrainLayerMaskColor(0);
+  assert(Math.abs(painted.vertices[6] - want[0]) < 0.001 &&
+         Math.abs(painted.vertices[7] - want[1]) < 0.001 &&
+         Math.abs(painted.vertices[8] - want[2]) < 0.001,
+    'mask: a fully-painted cell takes the layer mask colour');
+  // ...and its neighbour, which nobody painted, must not have moved.
+  assert(painted.vertices[STRIDE + 6] === r0,
+    'mask: an unpainted cell keeps the bare colour');
+
+  // A short weights array (hand-edited file, resized grid) must not produce NaN.
+  t.layers[0].weights = [1.0];
+  const ragged = buildHeightmapMesh(t);
+  assert(ragged.vertices[STRIDE + 6] === r0, 'mask: a short weights array degrades to bare, not NaN');
 }
