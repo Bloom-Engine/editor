@@ -66,6 +66,21 @@ export function runSelfTests(): number {
   return failed;
 }
 
+/// ⚠️ THIS TEST DOES NOT TEST THE SAVE PATH. Read before trusting its green tick.
+///
+/// It builds a SYNTHETIC 2-entity world and round-trips it with `JSON.stringify`
+/// — which is (a) not what saving does (`saveWorld` → `serialize.ts` hand-writes
+/// the text) and (b) the exact idiom `docs/perry-quirks.md` #6 says CORRUPTS a
+/// parsed graph, i.e. the bug that made `saveWorld` write 0 bytes and report OK.
+///
+/// So this passes by construction on a small fresh object, while covering none of
+/// the thing that actually broke. That is worse than no test: it is a green check
+/// over the exact hole.
+///
+/// PLAN §K1 is the real work and is still OUTSTANDING: load
+/// `../shooter/assets/worlds/arena_01|02.world.json`, save them through
+/// `saveWorld`, and deep-compare. Per §K1's own wording, any normalisation the
+/// saver applies is a bug to fix, not a tolerance to add. No fixture exists yet.
 function testWorldRoundTrip(): void {
   const world = createEmptyWorld('test', 'Test World');
   world.entities.push(createEntity('ent_1', 'models/tree.glb', [5, 0, 3]));
