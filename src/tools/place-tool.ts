@@ -4,10 +4,11 @@
 import { getMouseX, getMouseY, getScreenWidth, getScreenHeight } from 'bloom';
 import { createEntity, Vec3Lit } from 'bloom/world';
 import { sampleHeight } from 'bloom/world';
-import { EditorState, nextEntityId } from '../state/editor-state';
+import { EditorState, nextEntityId, setStatus } from '../state/editor-state';
 import { CreateEntityCommand } from '../state/commands/create-entity';
 import { runCommand } from '../state/commands';
 import { mouseToWorldRay, rayPlaneIntersect } from '../viewport/ray';
+import { wouldCycle } from './prefab-tool';
 
 export function handlePlaceClick(state: EditorState): void {
   if (state.activeTool !== 'place' || state.placeAssetRef === null) return;
@@ -37,6 +38,15 @@ export function handlePlaceClick(state: EditorState): void {
   const isPrefab = ref.startsWith('prefab:');
   const modelRef = isPrefab ? null : ref;
   const prefabRef = isPrefab ? ref.substring(7) : null;
+
+  // A prefab that contains itself — directly or through a chain — expands forever at
+  // load time and takes the game down with it. The one place that can be created is
+  // right here, so it is the one place that has to refuse.
+  if (isPrefab && prefabRef !== null && state.editingPrefab
+      && wouldCycle(state, prefabRef)) {
+    setStatus(state, 'Cannot place "' + prefabRef + '" inside itself — prefab cycle');
+    return;
+  }
 
   const entity = createEntity(id, modelRef || '', hitPoint as Vec3Lit);
   if (isPrefab) {

@@ -21,7 +21,10 @@ export interface Project {
   modelsDir: string;         // Resolved absolute.
   prefabsDir: string;
   worldsDir: string;
+  texturesDir: string;         // Splat-layer source textures.
   defaultWorld: string;
+  /// Optional: the game binary to launch for play-in-editor. Empty = no Play button.
+  playCommand: string;
 }
 
 export interface ModelEntry {
@@ -48,6 +51,7 @@ export class AssetCatalog {
   prefabs: Map<string, PrefabData>;   // Key = prefab id.
   modelOrder: string[];               // Stable iteration order for the panel.
   prefabOrder: string[];
+  textureOrder: string[];             // relPaths under texturesDir; splat-layer sources.
   filter: string;                     // Substring filter for the asset panel.
   activeCategory: string;             // "all" or a category slug.
   activeTab: number;                  // 0 = Models, 1 = Prefabs.
@@ -57,6 +61,7 @@ export class AssetCatalog {
     this.prefabs = new Map<string, PrefabData>();
     this.modelOrder = [];
     this.prefabOrder = [];
+    this.textureOrder = [];
     this.filter = '';
     this.activeCategory = 'all';
     this.activeTab = 0;
@@ -111,6 +116,19 @@ export class HandleMap {
 
 // ---- main state object -----------------------------------------------------
 
+/// The world (and its history) parked while a prefab is being edited.
+export interface PrefabStash {
+  world: WorldData;
+  worldPath: string | null;
+  undoStack: Command[];
+  redoStack: Command[];
+  selectionIds: string[];
+  selectionPrimary: string | null;
+  activeTool: ToolId;
+  placeAssetRef: string | null;
+  modified: boolean;
+}
+
 export interface EditorState {
   // Project
   project: Project | null;
@@ -122,7 +140,18 @@ export interface EditorState {
   worldPath: string | null;
   world: WorldData;
   editingPrefab: PrefabData | null;    // Non-null while in prefab edit mode.
+  // What the world looked like before we entered prefab mode. See prefab-tool.ts:
+  // while editing, the prefab's children ARE `state.world.entities`, so every tool,
+  // gizmo and undo command already written for entities works on them unchanged.
+  // This is what gets swapped back on the way out.
+  prefabStash: PrefabStash | null;
   modified: boolean;
+
+  // A transient line in the status bar. The editor had no way to tell the user it
+  // had REFUSED something — a click that silently does nothing reads as a bug in
+  // the editor, not as a rule being enforced.
+  statusMessage: string;
+  statusMessageT: number;   // seconds remaining
 
   // Selection
   selection: Selection;
@@ -188,6 +217,9 @@ export function createEditorState(): EditorState {
     worldPath: null,
     world: createEmptyWorld('untitled', 'Untitled World'),
     editingPrefab: null,
+    prefabStash: null,
+    statusMessage: '',
+    statusMessageT: 0,
     modified: false,
     selection: { ids: new Set<EntityId>(), primary: null, kind: 'entity' },
     activeTool: 'select',
@@ -315,4 +347,11 @@ export function nextEntityId(state: EditorState): string {
   }
   state.world.metadata[key] = (n + 1).toString();
   return 'ent_' + n.toString().padStart(4, '0');
+}
+
+
+/// Post a transient message to the status bar.
+export function setStatus(state: EditorState, msg: string): void {
+  state.statusMessage = msg;
+  state.statusMessageT = 4.0;
 }

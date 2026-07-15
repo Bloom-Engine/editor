@@ -20,7 +20,28 @@ export function loadAssetCatalog(state: EditorState): void {
 
   loadModels(state, project);
   loadPrefabs(state, project);
+  loadTextures(state, project);
   invalidatePrefabRegistry();
+}
+
+/// List the texture files, but do NOT load them.
+///
+/// Splat layers only ever store a path — the game decodes the image, the editor
+/// shows a mask colour. Loading forty 2K PNGs into VRAM at startup so the layer
+/// panel can print their names would be the most expensive no-op in the program.
+function loadTextures(state: EditorState, project: Project): void {
+  let files: string[];
+  try {
+    files = readdirSync(project.texturesDir) as string[];
+  } catch (e) {
+    return; // No textures dir — the layer picker just comes up empty.
+  }
+
+  for (let i = 0; i < files.length; i++) {
+    const file = files[i];
+    if (!file.endsWith('.png') && !file.endsWith('.jpg') && !file.endsWith('.jpeg')) continue;
+    state.catalog.textureOrder.push(joinPath(project.texturesDir, file));
+  }
 }
 
 function loadModels(state: EditorState, project: Project): void {

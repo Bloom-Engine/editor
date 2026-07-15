@@ -29,7 +29,20 @@ export function categoryFromName(relPath: string): string {
 }
 
 export function joinPath(a: string, b: string): string {
-  if (a.length === 0) return b;
+  // '.' is not a directory component — it is "here", and prefixing it produces a
+  // path that is EQUIVALENT to `b` but not EQUAL to it. That distinction cost the
+  // editor its entire model rendering:
+  //
+  //   the project file lives in the CWD, so rootDir came out as '.'
+  //   -> the asset catalog was keyed './assets/models/prop_tree.glb'
+  //   -> world entities reference  'assets/models/prop_tree.glb'
+  //   -> every lookup missed, and EVERY entity with a model rendered as a grey
+  //      placeholder cube. The whole arena — 88 trees, the building, every prop.
+  //
+  // The models loaded fine. Nothing errored. The editor just quietly showed you a
+  // level made of boxes, which is indistinguishable from "this level is made of
+  // boxes" and is why it survived so long.
+  if (a.length === 0 || a === '.' || a === './') return b;
   if (b.length === 0) return a;
   if (a.charAt(a.length - 1) === '/') return a + b;
   return a + '/' + b;

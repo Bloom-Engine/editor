@@ -3,9 +3,17 @@
 
 import { getScreenWidth, getScreenHeight } from 'bloom';
 import { UiContext } from '../ui-context';
-import { beginPanel, endPanel, label, labelSmall, listRow, separator, toolButton } from '../widgets';
+import { beginPanel, endPanel, label, labelSmall, listRow, separator, toolButton, button } from '../widgets';
+import { textInput, Ref } from '../text-input';
 import { Theme } from '../theme';
 import { EditorState } from '../../state/editor-state';
+import {
+  enterNewPrefabMode, enterPrefabEditMode, exitPrefabMode, savePrefabToDisk,
+} from '../../tools/prefab-tool';
+
+// The name field for "New Prefab". Module-scope because it must survive between
+// frames — an immediate-mode text field with a per-frame Ref forgets what you typed.
+const newPrefabName: Ref<string> = { value: '' };
 
 export function drawAssetPanel(ui: UiContext, state: EditorState): void {
   const screenW = getScreenWidth();
@@ -95,22 +103,80 @@ function drawPrefabList(
   ui: UiContext, state: EditorState,
   panelX: number, panelW: number,
 ): void {
-  const order = state.catalog.prefabOrder;
-  if (order.length === 0) {
-    labelSmall(ui, 'No prefabs found');
+  // While a prefab is open, this tab is where you get OUT of it — offering to open a
+  // second one from inside the first is how you lose work.
+  if (state.editingPrefab) {
+    labelSmall(ui, 'Editing: ' + state.editingPrefab.name);
+    labelSmall(ui, 'Place parts from the Models tab.');
+    ui.cursorY += Theme.spacing;
+    if (button(ui, 'prefab_save', 'Save Prefab  (Ctrl+S)')) savePrefabToDisk(state);
+    if (button(ui, 'prefab_exit', 'Exit  (ESC)')) exitPrefabMode(state);
     return;
   }
+
+  // --- New prefab: name field + button.
+  const fieldW = panelW - Theme.padding * 2;
+  textInput(ui, 'new_prefab_name', newPrefabName, ui.cursorX, ui.cursorY, fieldW);
+  ui.cursorY += Theme.rowHeight + Theme.spacing;
+
+  const nm = newPrefabName.value.trim();
+  if (button(ui, 'new_prefab', '+ New Prefab')) {
+    // An unnamed prefab is a file you will never find again. Fall back to a
+    // sequential name rather than refusing the click and saying nothing.
+    const name = nm.length > 0 ? nm : ('prefab_' + (state.catalog.prefabOrder.length + 1));
+    enterNewPrefabMode(state, slugify(name), name);
+    newPrefabName.value = '';
+  }
+
+  separator(ui);
+
+  const order = state.catalog.prefabOrder;
+  if (order.length === 0) {
+    labelSmall(ui, 'No prefabs yet.');
+    labelSmall(ui, 'Name one above and hit + New Prefab.');
+    return;
+  }
+
+  let selectedId: string | null = null;
   for (let i = 0; i < order.length; i++) {
     const prefabId = order[i];
     const prefab = state.catalog.prefabs.get(prefabId);
     if (!prefab) continue;
 
     const selected = state.placeAssetRef === 'prefab:' + prefabId;
-    if (listRow(ui, 'prefab_' + i, prefab.name, selected, 0)) {
+    if (selected) selectedId = prefabId;
+    const n = prefab.children.length;
+    const rowText = prefab.name + '  (' + n + ')';
+    if (listRow(ui, 'prefab_' + i, rowText, selected, 0)) {
       state.placeAssetRef = 'prefab:' + prefabId;
       state.activeTool = 'place';
+      selectedId = prefabId;
     }
   }
+
+  // Edit the selected one. (No double-click: the UI context has no notion of one,
+  // and inventing a hidden gesture is worse than a visible button.)
+  if (selectedId !== null) {
+    ui.cursorY += Theme.spacing;
+    const p = state.catalog.prefabs.get(selectedId);
+    const label2 = 'Edit "' + (p ? p.name : selectedId) + '"';
+    if (button(ui, 'edit_prefab', label2)) enterPrefabEditMode(state, selectedId);
+  }
+}
+
+/// Lowercase, non-alphanumerics to underscores — this becomes a filename and a
+/// stable id that world files reference by string.
+function slugify(name: string): string {
+  let out = '';
+  const lower = name.toLowerCase();
+  for (let i = 0; i < lower.length; i++) {
+    const c = lower.charAt(i);
+    const code = lower.charCodeAt(i);
+    const isNum = code >= 48 && code <= 57;
+    const isAlpha = code >= 97 && code <= 122;
+    out = out + (isNum || isAlpha ? c : '_');
+  }
+  return out.length > 0 ? out : 'prefab';
 }
 
 function collectCategories(state: EditorState): string[] {

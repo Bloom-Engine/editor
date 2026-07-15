@@ -34,7 +34,9 @@ export function loadProject(state: EditorState): boolean {
     modelsDir?: string;
     prefabsDir?: string;
     worldsDir?: string;
+    texturesDir?: string;
     defaultWorld?: string;
+    playCommand?: string;
   };
 
   // Determine the root directory from the project file path.
@@ -48,7 +50,9 @@ export function loadProject(state: EditorState): boolean {
     modelsDir: joinPath(rootDir, raw.modelsDir || 'assets/models'),
     prefabsDir: joinPath(rootDir, raw.prefabsDir || 'assets/prefabs'),
     worldsDir: joinPath(rootDir, raw.worldsDir || 'assets/worlds'),
+    texturesDir: joinPath(rootDir, raw.texturesDir || 'assets/textures'),
     defaultWorld: raw.defaultWorld || '',
+    playCommand: raw.playCommand || '',
   };
 
   return true;

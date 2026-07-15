@@ -1,6 +1,7 @@
 // Top toolbar: File actions (New, Open, Save) + tool selection buttons.
 
 import { drawRect, getScreenWidth } from 'bloom';
+import { launchGame } from '../../playtest/launch';
 import { UiContext } from '../ui-context';
 import { toolButton } from '../widgets';
 import { Theme } from '../theme';
@@ -41,6 +42,18 @@ export function drawToolbar(ui: UiContext, state: EditorState): void {
   // Separator.
   drawRect(x, y + 2, 1, Theme.buttonHeight - 4, Theme.border);
   x += 8;
+
+  // Play-in-editor. Runs the REAL game on the level currently on screen — not on
+  // what is saved, on what you are looking at. Only shown when the project actually
+  // names a game to run; a dead button is worse than no button.
+  if (state.project && state.project.playCommand.length > 0) {
+    if (toolButton(ui, 'tb_play', 'Play', x, y, bw + 8, false)) {
+      launchGame(state);
+    }
+    x += bw + 8 + gap;
+    drawRect(x, y + 2, 1, Theme.buttonHeight - 4, Theme.border);
+    x += 8;
+  }
 
   // Tool buttons. Water/river were reachable only by hotkey (T/Y) before.
   const tools: [ToolId, string][] = [
