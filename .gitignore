@@ -3,6 +3,7 @@ dist/
 /main
 /main.exe
 /main.pdb
+/main-*.exe
 /bloom-editor
 /bloom-editor.exe
 /bloom-editor.pdb

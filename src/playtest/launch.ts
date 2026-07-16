@@ -12,7 +12,7 @@
 import { launchProcess } from 'bloom/core';
 import { saveWorld } from 'bloom/world';
 import { EditorState, setStatus } from '../state/editor-state';
-import { joinPath } from '../io/paths';
+import { joinPath, projectRelative } from '../io/paths';
 
 /// The scratch level. Deliberately inside the project's worlds dir rather than a
 /// system temp dir: the game resolves asset paths relative to its own working
@@ -44,8 +44,12 @@ export function launchGame(state: EditorState): void {
   //
   // launchProcess, not child_process.spawn — Perry's spawn compiles and then does
   // nothing at all (undefined pid, no process). See engine EN-048.
+  // The game runs with cwd = project root, so the --world argument must be
+  // PROJECT-relative — worldPath here is editor-relative and only matches
+  // when the editor happens to run from the project root.
   const cwd = project.rootDir.length > 0 ? project.rootDir : '.';
-  const pid = launchProcess(project.playCommand, ['--world', worldPath], cwd);
+  const gameWorldArg = projectRelative(project.rootDir, worldPath);
+  const pid = launchProcess(project.playCommand, ['--world', gameWorldArg], cwd);
   if (pid === 0) {
     setStatus(state, 'Play: could not launch ' + project.playCommand);
     return;

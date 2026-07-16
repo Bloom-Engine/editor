@@ -137,9 +137,19 @@ function drawModelList(
           { r: 255, g: 255, b: 255, a: 255 },
         );
       } else {
-        drawRect(x, rowY, cell, cell, Theme.field);
-        drawText(entry.loaded ? '…' : '·', x + cell / 2 - 3, rowY + cell / 2 - 8,
-          Theme.fontSize, Theme.textDim);
+        // No rendered thumbnail (see thumbnails.ts) — draw a clearly visible
+        // category-colored cell with the model's initial, dimmed while the
+        // GLB is still streaming in.
+        const cc = categoryColor(entry.category);
+        const dim = entry.loaded ? 1.0 : 0.45;
+        drawRect(x, rowY, cell, cell, {
+          r: Math.floor(cc[0] * dim), g: Math.floor(cc[1] * dim),
+          b: Math.floor(cc[2] * dim), a: 255,
+        });
+        const initial = entry.displayName.length > 0
+          ? entry.displayName.substring(0, 1).toUpperCase() : '?';
+        drawText(initial, x + cell / 2 - 5, rowY + cell / 2 - 10, 20,
+          { r: 255, g: 255, b: 255, a: 230 });
       }
 
       const selected = state.placeAssetRef === relPath;
@@ -227,6 +237,26 @@ function drawPrefabList(
     const label2 = 'Edit "' + (p ? p.name : selectedId) + '"';
     if (button(ui, 'edit_prefab', label2)) enterPrefabEditMode(state, selectedId);
   }
+}
+
+// Stable per-category cell color (same hash-to-hue trick as the viewport's
+// placeholder boxes): two categories never silently share a color, and a
+// category keeps its color across sessions.
+function categoryColor(category: string): [number, number, number] {
+  let h = 0;
+  for (let i = 0; i < category.length; i++) h = ((h * 31) + category.charCodeAt(i)) | 0;
+  const hue = (((h % 360) + 360) % 360) / 60;
+  const c = 0.55 * 0.5;
+  const x = c * (1 - Math.abs((hue % 2) - 1));
+  const m = 0.55 - c;
+  let r = 0, g = 0, b = 0;
+  if (hue < 1) { r = c; g = x; }
+  else if (hue < 2) { r = x; g = c; }
+  else if (hue < 3) { g = c; b = x; }
+  else if (hue < 4) { g = x; b = c; }
+  else if (hue < 5) { r = x; b = c; }
+  else { r = c; b = x; }
+  return [Math.floor((r + m) * 255), Math.floor((g + m) * 255), Math.floor((b + m) * 255)];
 }
 
 /// Lowercase, non-alphanumerics to underscores — this becomes a filename and a

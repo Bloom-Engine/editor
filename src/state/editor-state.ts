@@ -34,7 +34,14 @@ export interface Project {
 }
 
 export interface ModelEntry {
-  relPath: string;           // Relative to project root, e.g. "assets/models/tree_oak.glb".
+  // PROJECT-relative path, e.g. "assets/models/tree_oak.glb" — the catalog
+  // key, and byte-for-byte the string world files store in modelRef. NOT
+  // necessarily a path the editor can open (see filePath).
+  relPath: string;
+  // The path to actually read the file from, resolved against the project
+  // root (differs from relPath when the editor runs outside the game repo,
+  // e.g. --project ../shooter/editor.project.json).
+  filePath: string;
   displayName: string;       // Filename without extension.
   category: string;          // Derived from prefix: "tree_", "flower_", etc.
   modelHandle: number;       // Bloom Model.handle after loading; 0 until then.

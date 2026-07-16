@@ -16,7 +16,7 @@ import { PrefabData } from 'bloom/world';
 import {
   EditorState, ModelEntry, Project, handleOfEntity, setStatus,
 } from '../state/editor-state';
-import { basenameNoExt, categoryFromName, joinPath } from './paths';
+import { basenameNoExt, categoryFromName, joinPath, projectRelative } from './paths';
 import { invalidatePrefabRegistry } from '../world-sync/sync';
 
 // Reset + relist. Cheap: no GLB is opened here. Safe to call again when
@@ -55,13 +55,13 @@ export function pumpAssetCatalog(state: EditorState, maxPerFrame: number): numbe
       continue;
     }
 
-    const model = loadModel(entry.relPath);
+    const model = loadModel(entry.filePath);
     loadedThisFrame++;
     if (model.handle === 0) {
       // Unreadable GLB: mark failed so we don't retry every frame. Entities
       // referencing it stay placeholder boxes, same as a missing file.
       entry.failed = true;
-      console.error('asset catalog: failed to load ' + entry.relPath);
+      console.error('asset catalog: failed to load ' + entry.filePath);
       continue;
     }
 
@@ -107,7 +107,10 @@ function loadTextures(state: EditorState, project: Project): void {
   for (let i = 0; i < files.length; i++) {
     const file = files[i];
     if (!file.endsWith('.png') && !file.endsWith('.jpg') && !file.endsWith('.jpeg')) continue;
-    state.catalog.textureOrder.push(joinPath(project.texturesDir, file));
+    // Project-relative: these strings become splat-layer textureRefs in the
+    // world file, which the GAME resolves from its own root.
+    state.catalog.textureOrder.push(
+      projectRelative(project.rootDir, joinPath(project.texturesDir, file)));
   }
 }
 
@@ -123,9 +126,14 @@ function listModels(state: EditorState, project: Project): void {
     const file = files[i];
     if (!file.endsWith('.glb') && !file.endsWith('.gltf')) continue;
 
-    const relPath = joinPath(project.modelsDir, file);
+    // filePath opens the file; relPath (project-relative) is the KEY and must
+    // equal the world's modelRef exactly — a Map.get has no notion of
+    // "equivalent path". See projectRelative in paths.ts for the history.
+    const filePath = joinPath(project.modelsDir, file);
+    const relPath = projectRelative(project.rootDir, filePath);
     const entry: ModelEntry = {
       relPath: relPath,
+      filePath: filePath,
       displayName: basenameNoExt(file),
       category: categoryFromName(file),
       modelHandle: 0,

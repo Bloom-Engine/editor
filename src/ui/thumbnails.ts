@@ -1,107 +1,37 @@
-// Asset-panel model thumbnails (PLAN §G). Renders each loaded GLB once into a
-// 128x128 render texture; the asset panel draws the results as a grid.
+// Asset-panel model thumbnails (PLAN §G) — render pass currently DISABLED.
 //
-// Rendering happens INSIDE the normal frame (beginTextureMode switches the
-// target and endTextureMode switches back — the raylib idiom the engine
-// implements), one thumbnail per frame, and only after the streaming catalog
-// has finished loading models so the two pumps never fight over frame time.
+// The first implementation called beginTextureMode/endTextureMode mid-frame,
+// raylib-style. The engine's render targets don't work that way: the override
+// set by begin_texture_mode is consumed at END_FRAME ("the next end_frame will
+// render to this texture view instead of the surface" — renderer/mod.rs), and
+// 2D draws batch for the frame. So the thumbnail textures stayed empty and the
+// grid drew invisible images over dark panel — screenshot-verified 2026-07-16.
+//
+// Rendering a mesh into a texture on this engine needs either (a) a dedicated
+// whole frame per thumbnail with the world's scene nodes hidden, or (b) a real
+// engine-side render-mesh-to-texture utility. Until one of those exists, the
+// asset panel draws colored placeholder cells (visible, clickable, labeled) —
+// see asset-panel.ts. The API here stays so the grid lights up the day the
+// engine call exists.
 
-import {
-  loadRenderTexture, beginTextureMode, endTextureMode, getRenderTextureTexture,
-  beginMode3D, endMode3D, drawModel, drawRect,
-  Model, Camera3D,
-} from 'bloom';
 import { EditorState } from '../state/editor-state';
-import { Vec3Lit } from 'bloom/world';
 
 export const THUMB_SIZE = 128;
 
 export interface ThumbnailEntry {
-  textureHandle: number;   // Texture handle for drawTexturePro. 0 = failed.
+  textureHandle: number;
   width: number;
   height: number;
 }
 
-// Map from model relPath -> thumbnail. Module-scope cache; survives project
-// switches harmlessly (keys are relPaths, stale entries just go unused).
-const thumbnails = new Map<string, ThumbnailEntry>();
-let renderTargetsBroken = false;
-
-// Render at most `maxPerFrame` missing thumbnails. Call between beginDrawing
-// and the main 3D pass. Returns the number still missing.
-export function pumpThumbnails(state: EditorState, maxPerFrame: number): number {
-  if (renderTargetsBroken) return 0;
-
-  let rendered = 0;
-  let missing = 0;
-
-  for (let i = 0; i < state.catalog.modelOrder.length; i++) {
-    const relPath = state.catalog.modelOrder[i];
-    const entry = state.catalog.models.get(relPath);
-    if (!entry || !entry.loaded || entry.modelHandle === 0) continue;
-    if (thumbnails.has(relPath)) continue;
-
-    if (rendered >= maxPerFrame) {
-      missing++;
-      continue;
-    }
-
-    const rt = loadRenderTexture(THUMB_SIZE, THUMB_SIZE);
-    if (rt === 0) {
-      // Render targets unavailable on this backend — fall back to text rows
-      // forever rather than retrying every frame.
-      renderTargetsBroken = true;
-      return 0;
-    }
-
-    beginTextureMode(rt);
-    // Neutral dark backdrop so light and dark models both read.
-    drawRect(0, 0, THUMB_SIZE, THUMB_SIZE, { r: 28, g: 30, b: 34, a: 255 });
-    beginMode3D(thumbnailCamera(entry.boundsMin, entry.boundsMax));
-    const model: Model = { handle: entry.modelHandle } as Model;
-    drawModel(model,
-      { x: 0, y: 0, z: 0 },
-      1,
-      { r: 255, g: 255, b: 255, a: 255 });
-    endMode3D();
-    endTextureMode();
-
-    const tex = getRenderTextureTexture(rt);
-    thumbnails.set(relPath, {
-      textureHandle: tex.handle,
-      width: THUMB_SIZE,
-      height: THUMB_SIZE,
-    });
-    rendered++;
-  }
-
-  return missing + (rendered > 0 ? 1 : 0);
+// No-op while the render pass is disabled. Returns 0 = "nothing pending" so
+// main.ts never waits on it.
+export function pumpThumbnails(_state: EditorState, _maxPerFrame: number): number {
+  return 0;
 }
 
-// Frame the model's AABB from a three-quarter view. Model draws at origin
-// with scale 1, so the camera looks at the AABB's own center.
-function thumbnailCamera(bmin: Vec3Lit, bmax: Vec3Lit): Camera3D {
-  const cx = (bmin[0] + bmax[0]) / 2;
-  const cy = (bmin[1] + bmax[1]) / 2;
-  const cz = (bmin[2] + bmax[2]) / 2;
-  const dx = bmax[0] - bmin[0];
-  const dy = bmax[1] - bmin[1];
-  const dz = bmax[2] - bmin[2];
-  let r = Math.sqrt(dx * dx + dy * dy + dz * dz) / 2;
-  if (r < 0.001) r = 1;
-
-  return {
-    position: { x: cx + r * 1.7, y: cy + r * 1.2, z: cz + r * 1.7 },
-    target: { x: cx, y: cy, z: cz },
-    up: { x: 0, y: 1, z: 0 },
-    fovy: 40,
-    projection: 'perspective',
-  };
-}
-
-// The thumbnail for a model, or null when not (yet) rendered.
-export function getThumbnail(relPath: string): ThumbnailEntry | null {
-  const entry = thumbnails.get(relPath);
-  if (entry === undefined) return null;
-  return entry;
+// Always null while the render pass is disabled — the asset panel then draws
+// its colored placeholder cell.
+export function getThumbnail(_relPath: string): ThumbnailEntry | null {
+  return null;
 }

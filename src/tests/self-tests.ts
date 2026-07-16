@@ -31,7 +31,7 @@ import { paintCell } from '../tools/brush-tool';
 import {
   enterNewPrefabMode, enterPrefabEditMode, exitPrefabMode, wouldCycle,
 } from '../tools/prefab-tool';
-import { joinPath } from '../io/paths';
+import { joinPath, projectRelative } from '../io/paths';
 
 let passed = 0;
 let failed = 0;
@@ -675,6 +675,21 @@ function testPathJoinIdentity(): void {
   const catalogKey = joinPath(joinPath('.', 'assets/models'), 'prop_tree.glb');
   assert(catalogKey === 'assets/models/prop_tree.glb',
     'paths: catalog key MATCHES the world modelRef');
+
+  // The SAME disease one level up (found 2026-07-16, screenshot-verified):
+  // `--project ../shooter/editor.project.json` makes rootDir '../shooter', the
+  // load path '../shooter/assets/models/x.glb' — and the catalog key must
+  // still be the project-relative 'assets/models/x.glb' the world stores.
+  assert(projectRelative('../shooter', '../shooter/assets/models/prop_tree.glb')
+    === 'assets/models/prop_tree.glb',
+    'paths: --project catalog key strips the root back to the world modelRef');
+  assert(projectRelative('.', 'assets/models/prop_tree.glb') === 'assets/models/prop_tree.glb',
+    'paths: "." root is identity');
+  assert(projectRelative('proj/', 'proj/assets/x.glb') === 'assets/x.glb',
+    'paths: trailing-slash root strips cleanly');
+  assert(projectRelative('../shooter', 'assets/models/unrelated.glb')
+    === 'assets/models/unrelated.glb',
+    'paths: a path outside the root passes through untouched');
 }
 
 // ---- Splat layers (PLAN §D) -------------------------------------------------
