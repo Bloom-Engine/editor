@@ -62,6 +62,7 @@ import { drawInspector } from './ui/layouts/inspector';
 import { drawOutliner } from './ui/layouts/outliner';
 import { drawRecentPanel } from './ui/layouts/recent-panel';
 import { drawStatusBar } from './ui/layouts/status-bar';
+import { pumpThumbnails } from './ui/thumbnails';
 import { runSelfTests } from './tests/self-tests';
 
 // ---- self-tests (headless) ---------------------------------------------------
@@ -142,6 +143,10 @@ state.pendingEnvironmentSync = true;
 // Auto-save timer (every 2 minutes).
 const AUTOSAVE_INTERVAL = 120; // seconds
 let autosaveTimer = 0;
+
+// Models still streaming in (previous frame's count). Thumbnails wait for
+// zero so the two per-frame pumps never fight over frame time.
+let modelsPending = 1;
 
 // ---- main loop -------------------------------------------------------------
 
@@ -269,6 +274,13 @@ while (!windowShouldClose()) {
     a: 255,
   });
 
+  // Render missing asset thumbnails, one per frame, once models are in.
+  // Must run inside the frame but before the main 3D pass (it switches the
+  // render target and back).
+  if (modelsPending === 0 && !state.playtesting) {
+    pumpThumbnails(state, 1);
+  }
+
   // ---- 3D viewport ---------------------------------------------------------
 
   const cam3D = buildCamera3D(state.camera);
@@ -359,6 +371,7 @@ while (!windowShouldClose()) {
   // ---- stream in pending models (one GLB per frame) --------------------------
 
   const pendingModels = pumpAssetCatalog(state, 1);
+  modelsPending = pendingModels;
   if (pendingModels > 0) {
     state.statusMessage = 'Loading models… ' + pendingModels + ' remaining';
     state.statusMessageT = 0.5;
