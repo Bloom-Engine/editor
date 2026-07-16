@@ -3,8 +3,10 @@
 // pass/fail summary; runSelfTests returns the failure count.
 
 import { WorldData, PrefabData, WaterVolume, createEmptyWorld, createEntity } from 'bloom/world';
-import { validateWorld, validatePrefab } from 'bloom/world';
-import { migrateWorldData } from 'bloom/world';
+import { validateWorld, validatePrefab, listUnknownWorldFields } from 'bloom/world';
+import { migrateWorldData, WORLD_SCHEMA_VERSION } from 'bloom/world';
+import { loadWorld, saveWorld, loadPrefab, savePrefab, createEmptyPrefab } from 'bloom/world';
+import { readFile } from 'bloom';
 import { buildHeightmapMesh, sampleHeight, defaultTerrain } from 'bloom/world';
 import { createTerrainLayer, quantizeWeight, terrainLayerMaskColor } from 'bloom/world';
 import { expandPrefab, createPrefabRegistry, registerPrefab, PrefabLeaf } from 'bloom/world';
@@ -43,7 +45,9 @@ export function runSelfTests(): number {
   passed = 0;
   failed = 0;
 
-  testWorldRoundTrip();
+  testWorldFileRoundTrip();
+  testPrefabFileRoundTrip();
+  testUnknownFieldDetection();
   testValidation();
   testTerrainBilinearSample();
   testPrefabCycleDetection();
@@ -66,37 +70,164 @@ export function runSelfTests(): number {
   return failed;
 }
 
-/// ⚠️ THIS TEST DOES NOT TEST THE SAVE PATH. Read before trusting its green tick.
-///
-/// It builds a SYNTHETIC 2-entity world and round-trips it with `JSON.stringify`
-/// — which is (a) not what saving does (`saveWorld` → `serialize.ts` hand-writes
-/// the text) and (b) the exact idiom `docs/perry-quirks.md` #6 says CORRUPTS a
-/// parsed graph, i.e. the bug that made `saveWorld` write 0 bytes and report OK.
-///
-/// So this passes by construction on a small fresh object, while covering none of
-/// the thing that actually broke. That is worse than no test: it is a green check
-/// over the exact hole.
-///
-/// PLAN §K1 is the real work and is still OUTSTANDING: load
-/// `../shooter/assets/worlds/arena_01|02.world.json`, save them through
-/// `saveWorld`, and deep-compare. Per §K1's own wording, any normalisation the
-/// saver applies is a bug to fix, not a tolerance to add. No fixture exists yet.
-function testWorldRoundTrip(): void {
-  const world = createEmptyWorld('test', 'Test World');
-  world.entities.push(createEntity('ent_1', 'models/tree.glb', [5, 0, 3]));
-  world.entities.push(createEntity('ent_2', 'models/rock.glb', [-2, 0, 7]));
-  world.terrain = defaultTerrain();
+// --- The real round-trip test (PLAN §K1) ---------------------------------------
+//
+// This replaces a synthetic test that round-tripped a small fresh object through
+// `JSON.stringify` — the exact idiom that corrupts a parsed graph on Perry 0.5.x
+// (perry-quirks #6), and not the code path saving actually uses. It was a green
+// tick over the exact hole.
+//
+// This one exercises the REAL path on the REAL worlds: fixture copies of both
+// shooter arenas (checked in under fixtures/, both schema v2 so no migration
+// noise) go loadWorld → saveWorld → JSON.parse both → structural deep-compare.
+// Any difference — a dropped field, a normalised number, a reordered array —
+// is a saver bug to fix, not a tolerance to add. Text formatting is allowed to
+// differ (the arenas were written by shooter tools with a different pretty-
+// printer); parsed VALUES are not.
 
-  const json = JSON.stringify(world);
-  const parsed = JSON.parse(json) as WorldData;
+// Structural equality of two parsed-JSON values. Records dotted paths of the
+// first few differences into `diffs` so a failure says WHERE, not just "false".
+function deepJsonEqual(a: unknown, b: unknown, path: string, diffs: string[]): void {
+  if (diffs.length >= 8) return; // enough to diagnose; don't flood the console
 
-  assert(parsed.schemaVersion === world.schemaVersion, 'roundtrip: schemaVersion');
-  assert(parsed.name === 'Test World', 'roundtrip: name');
-  assert(parsed.entities.length === 2, 'roundtrip: entity count');
-  assert(parsed.entities[0].id === 'ent_1', 'roundtrip: entity id');
-  assert(parsed.entities[1].transform.position[2] === 7, 'roundtrip: position z');
-  assert(parsed.terrain !== null, 'roundtrip: terrain not null');
-  assert(parsed.terrain!.width === 128, 'roundtrip: terrain width');
+  if (a === null || b === null) {
+    if (a !== b) diffs.push(path + ': ' + (a === null ? 'null vs value' : 'value vs null'));
+    return;
+  }
+
+  const ta = typeof a;
+  const tb = typeof b;
+  if (ta !== tb) {
+    diffs.push(path + ': type ' + ta + ' vs ' + tb);
+    return;
+  }
+
+  if (ta === 'number' || ta === 'string' || ta === 'boolean') {
+    if (a !== b) diffs.push(path + ': ' + a + ' vs ' + b);
+    return;
+  }
+
+  if (Array.isArray(a) || Array.isArray(b)) {
+    if (!Array.isArray(a) || !Array.isArray(b)) {
+      diffs.push(path + ': array vs object');
+      return;
+    }
+    if (a.length !== b.length) {
+      diffs.push(path + ': length ' + a.length + ' vs ' + b.length);
+      return;
+    }
+    for (let i = 0; i < a.length; i++) {
+      deepJsonEqual(a[i], b[i], path + '[' + i + ']', diffs);
+      if (diffs.length >= 8) return;
+    }
+    return;
+  }
+
+  // Plain objects. Key sets must match in both directions.
+  const ka = Object.keys(a as Record<string, unknown>);
+  const kb = Object.keys(b as Record<string, unknown>);
+  for (let i = 0; i < ka.length; i++) {
+    if (kb.indexOf(ka[i]) < 0) diffs.push(path + '.' + ka[i] + ': missing in saved output');
+  }
+  for (let i = 0; i < kb.length; i++) {
+    if (ka.indexOf(kb[i]) < 0) diffs.push(path + '.' + kb[i] + ': added by saver');
+  }
+  if (diffs.length >= 8) return;
+  for (let i = 0; i < ka.length; i++) {
+    if (kb.indexOf(ka[i]) >= 0) {
+      deepJsonEqual(
+        (a as Record<string, unknown>)[ka[i]],
+        (b as Record<string, unknown>)[ka[i]],
+        path + '.' + ka[i],
+        diffs,
+      );
+      if (diffs.length >= 8) return;
+    }
+  }
+}
+
+function roundTripWorldFixture(fixturePath: string, label: string): void {
+  const original = readFile(fixturePath);
+  if (!original || original.length === 0) {
+    assert(false, 'roundtrip ' + label + ': fixture readable (' + fixturePath + ') — run from the editor root');
+    return;
+  }
+
+  const world = loadWorld(fixturePath);
+  const outPath = '__selftest_' + label + '.out.json';
+  const saved = saveWorld(outPath, world);
+  assert(saved.ok, 'roundtrip ' + label + ': saveWorld reports ok');
+  if (!saved.ok) return;
+
+  const written = readFile(outPath);
+  // The historical failure mode: writeFile wrote 0 bytes and reported success.
+  assert(written !== null && written.length > 0, 'roundtrip ' + label + ': saved file is not empty');
+  if (!written || written.length === 0) return;
+
+  const a = JSON.parse(original);
+  const b = JSON.parse(written);
+  const diffs: string[] = [];
+  deepJsonEqual(a, b, 'world', diffs);
+  for (let i = 0; i < diffs.length; i++) {
+    console.log('  roundtrip ' + label + ' diff: ' + diffs[i]);
+  }
+  assert(diffs.length === 0, 'roundtrip ' + label + ': load->save is semantically lossless');
+}
+
+function testWorldFileRoundTrip(): void {
+  roundTripWorldFixture('src/tests/fixtures/arena_01.world.json', 'arena_01');
+  roundTripWorldFixture('src/tests/fixtures/arena_02.world.json', 'arena_02');
+}
+
+// Prefab save->load round-trip. Pins the 2026-07-15 fix: serializePrefab used to
+// drop schemaVersion and bounds entirely (bounds came back undefined; the version
+// was silently backfilled by migration, hiding the loss).
+function testPrefabFileRoundTrip(): void {
+  const p = createEmptyPrefab('rt_prefab', 'RT Prefab');
+  assert(p.schemaVersion === WORLD_SCHEMA_VERSION,
+    'prefab rt: createEmptyPrefab stamps the CURRENT schema version');
+
+  p.bounds = { min: [-1, -2, -3], max: [4, 5, 6] };
+  p.children.push({
+    id: 'c0', modelRef: 'wall.glb', prefabRef: null,
+    transform: { position: [1, 0, 2], rotation: [0, 0.5, 0], scale: [2, 1, 1] },
+    tint: [1, 0.5, 0.25, 1], tags: ['wall'],
+  });
+
+  const outPath = '__selftest_prefab.out.json';
+  const saved = savePrefab(outPath, p);
+  assert(saved.ok, 'prefab rt: savePrefab reports ok');
+  if (!saved.ok) return;
+
+  const back = loadPrefab(outPath);
+  assert(back.schemaVersion === WORLD_SCHEMA_VERSION, 'prefab rt: schemaVersion survives the round trip');
+  assert(back.bounds !== null && back.bounds !== undefined, 'prefab rt: bounds survives the round trip');
+  assert(back.bounds.min[0] === -1 && back.bounds.max[2] === 6, 'prefab rt: bounds values intact');
+  assert(back.children.length === 1, 'prefab rt: child count');
+  assert(back.children[0].modelRef === 'wall.glb', 'prefab rt: child modelRef');
+  assert(back.children[0].tint !== null && back.children[0].tint![1] === 0.5, 'prefab rt: child tint');
+  assert(back.children[0].tags.length === 1 && back.children[0].tags[0] === 'wall', 'prefab rt: child tags');
+  assert(back.children[0].transform.rotation[1] === 0.5, 'prefab rt: child rotation');
+}
+
+// The editor cannot preserve fields it doesn't know (the saver is schema-
+// explicit by literal key), so the contract is: detect them at load and warn.
+// A world that came out of createEmptyWorld must list NOTHING — a false
+// positive here would spam every load with bogus warnings.
+function testUnknownFieldDetection(): void {
+  const clean = createEmptyWorld('t', 'T');
+  assert(listUnknownWorldFields(clean).length === 0, 'unknown fields: clean world lists none');
+
+  const w = createEmptyWorld('t2', 'T2') as any;
+  w.navmesh = { cells: [1, 2, 3] };                    // top-level extension
+  const e = createEntity('e1', 'a.glb', [0, 0, 0]) as any;
+  e.lootTable = 'common';                              // entity-level extension
+  w.entities.push(e);
+
+  const unknown = listUnknownWorldFields(w as WorldData);
+  assert(unknown.length === 2, 'unknown fields: both extensions detected (got ' + unknown.length + ')');
+  assert(unknown.indexOf('world.navmesh') >= 0, 'unknown fields: top-level path reported');
+  assert(unknown.indexOf('world.entities[0].lootTable') >= 0, 'unknown fields: entity path reported');
 }
 
 function testValidation(): void {

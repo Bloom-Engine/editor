@@ -1,8 +1,8 @@
 // Thin wrapper around bloom/world loader/saver for the editor.
 // Handles file path resolution and state updates (modified flag, world path).
 
-import { loadWorld, saveWorld, createEmptyWorld } from 'bloom/world';
-import { EditorState } from '../state/editor-state';
+import { loadWorld, saveWorld, createEmptyWorld, listUnknownWorldFields } from 'bloom/world';
+import { EditorState, setStatus } from '../state/editor-state';
 import { rebuildAllSceneNodes } from '../world-sync/sync';
 import { joinPath } from './paths';
 
@@ -15,6 +15,16 @@ export function openWorld(state: EditorState, path: string): boolean {
     state.selection.ids.clear();
     state.selection.primary = null;
     rebuildAllSceneNodes(state);
+
+    // The saver is schema-explicit: fields it doesn't know are dropped on the
+    // first Ctrl+S. loadWorld already printed each one to the console; the
+    // status bar makes sure the user saw it BEFORE saving, not after.
+    const unknown = listUnknownWorldFields(world);
+    if (unknown.length > 0) {
+      setStatus(state,
+        'This file has ' + unknown.length + ' field(s) this editor does not know (e.g. ' +
+        unknown[0] + ') — saving will DROP them. See console.');
+    }
     return true;
   } catch (e) {
     return false;
