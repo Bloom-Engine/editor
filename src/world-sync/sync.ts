@@ -123,9 +123,19 @@ function hueToRgb(hue: number): Vec3Lit {
   return [Math.floor((r + m) * 255), Math.floor((g + m) * 255), Math.floor((b + m) * 255)];
 }
 
-function placeholderColor(entity: EntityData): Vec3Lit {
+function placeholderColor(state: EditorState, entity: EntityData): Vec3Lit {
   const kind = entity.userData['kind'];
   if (kind === undefined || kind === '') return [255, 0, 255];
+
+  // Project-supplied colors first (editor.project.json `kindColors`) — the
+  // game's own vocabulary beats the editor's built-in shooter-era table.
+  if (state.project !== null) {
+    const keys = state.project.kindColorKeys;
+    for (let i = 0; i < keys.length; i++) {
+      if (keys[i] === kind) return state.project.kindColorValues[i];
+    }
+  }
+
   if (kind === 'static_mesh') {
     const tag = entity.tags.length > 0 ? entity.tags[0] : '';
     const byTag = MESH_TAG_COLORS.get(tag);
@@ -280,7 +290,7 @@ function syncRebuilds(state: EditorState): void {
       if (entity.tint !== null) {
         applyTint(node, entity.tint);
       } else {
-        const c = placeholderColor(entity);
+        const c = placeholderColor(state, entity);
         setSceneNodeColor(node, c[0], c[1], c[2], 255);
       }
     }

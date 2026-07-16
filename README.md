@@ -28,6 +28,8 @@ perry compile src/main.ts
 
 `perry compile` emits the binary as `./main` (`main.exe` on Windows; pass `-o <name>` to change it). The native-library grant lives in `package.json` under `perry.allow.nativeLibrary`, so no environment variables are needed.
 
+**Windows:** copy `dxcompiler.dll` and `dxil.dll` from `../engine/native/shared/` next to the binary once. Without them the Dx12 backend is unavailable and the editor crashes at window creation ("Failed to create surface") when launched from any directory that doesn't happen to contain them — which is why it used to work only from the shooter's root.
+
 Run the self-test suite headless with:
 
 ```sh

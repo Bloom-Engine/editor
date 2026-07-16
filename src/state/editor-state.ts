@@ -18,6 +18,7 @@ export interface Project {
   filePath: string;          // Absolute path of editor.project.json.
   rootDir: string;           // Directory containing the project file.
   name: string;
+  gameId: string;            // Stable slug; shown in the window title.
   modelsDir: string;         // Resolved absolute.
   prefabsDir: string;
   worldsDir: string;
@@ -25,6 +26,11 @@ export interface Project {
   defaultWorld: string;
   /// Optional: the game binary to launch for play-in-editor. Empty = no Play button.
   playCommand: string;
+  // Optional per-game placeholder colors from the project file's `kindColors`
+  // ("kind": "r,g,b" 0-255). Parallel arrays, NOT a Map: Perry 0.5.x
+  // miscompiles Map fields on interfaces (docs/perry-map-size-av.md).
+  kindColorKeys: string[];
+  kindColorValues: Vec3Lit[];
 }
 
 export interface ModelEntry {

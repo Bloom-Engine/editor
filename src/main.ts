@@ -66,9 +66,23 @@ import { runSelfTests } from './tests/self-tests';
 
 // `bloom-editor --test` runs the suite without opening a window and exits
 // nonzero on any failure, so CI and pre-commit hooks can gate on it.
+//
+// `--project <path>` opens a specific editor.project.json (instead of walking
+// up from CWD), and `--world <path>` opens a specific world file — with or
+// without a project. Together they let the editor open ANY game's data from
+// anywhere, no dialogs: `main --project ../game/editor.project.json` or
+// `main --world some/level.world.json`.
 let selfTestMode = false;
+let argProjectPath: string | null = null;
+let argWorldPath: string | null = null;
 for (let i = 0; i < process.argv.length; i++) {
   if (process.argv[i] === '--test') selfTestMode = true;
+  if (process.argv[i] === '--project' && i + 1 < process.argv.length) {
+    argProjectPath = process.argv[i + 1];
+  }
+  if (process.argv[i] === '--world' && i + 1 < process.argv.length) {
+    argWorldPath = process.argv[i + 1];
+  }
 }
 if (selfTestMode) {
   const failures = runSelfTests();
@@ -91,13 +105,25 @@ const rotateGizmo = createRotateGizmoState();
 const scaleGizmo = createScaleGizmoState();
 
 // Load project + assets.
-loadProject(state);
+loadProject(state, argProjectPath);
 // Blocking: loads every GLB in the project's models dir (~20 s for the
 // shooter's 26 on a mid Windows box). Worth making async — see PLAN.md.
 loadAssetCatalog(state);
 
-// Open default world if available.
-if (state.project && state.project.defaultWorld.length > 0) {
+if (state.project !== null) {
+  setWindowTitle('Bloom World Editor — ' + state.project.name +
+    (state.project.gameId.length > 0 ? ' (' + state.project.gameId + ')' : ''));
+}
+
+// Open a world: --world wins, then the project's default.
+if (argWorldPath !== null) {
+  if (openWorld(state, argWorldPath)) {
+    if (state.project) addRecentProject(state.project.name, state.project.filePath);
+    frameCameraOnWorld(state);
+  } else {
+    console.error('could not open --world ' + argWorldPath);
+  }
+} else if (state.project && state.project.defaultWorld.length > 0) {
   const worldPath = state.project.worldsDir + '/' + state.project.defaultWorld;
   openWorld(state, worldPath);
   addRecentProject(state.project.name, state.project.filePath);

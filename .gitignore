@@ -15,3 +15,9 @@ tools/.testout/
 
 # Scratch output written by `main --test` (round-trip self-tests)
 /__selftest_*
+
+# DirectX shader compiler, copied from ../engine/native/shared/ (see README).
+# Without these beside the exe, the Dx12 backend is unavailable and the editor
+# dies at window creation unless launched from a directory that has them.
+/dxcompiler.dll
+/dxil.dll

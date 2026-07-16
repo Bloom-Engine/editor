@@ -12,9 +12,12 @@ import {
 } from '../widgets';
 import { textInput } from '../text-input';
 import { Theme } from '../theme';
-import { EditorState, selectedEntityId } from '../../state/editor-state';
+import { EditorState, selectedEntityId, setStatus } from '../../state/editor-state';
 import { TransformEntityCommand } from '../../state/commands/transform-entity';
 import { SetUserDataCommand } from '../../state/commands/set-userdata';
+import {
+  RenameEntityCommand, SetTintCommand, SetTagsCommand, SetModelRefCommand,
+} from '../../state/commands/edit-entity';
 import {
   EditWaterCommand, EditRiverCommand, RemoveWaterCommand, RemoveRiverCommand,
 } from '../../state/commands/edit-water';
@@ -25,6 +28,14 @@ import { Vec3Lit, TransformData, EntityData, WaterVolume, RiverSpline } from 'bl
 // Add-row scratch state — survives across frames until '+' commits it.
 const newKeyRef: Ref<string> = { value: '' };
 const newValRef: Ref<string> = { value: '' };
+const newTagRef: Ref<string> = { value: '' };
+
+// modelRef edits use a DRAFT that only commits on the Apply button — unlike
+// userData values, a half-typed model path is not a meaningful intermediate
+// state (each keystroke would rebuild the node into a magenta placeholder).
+const modelDraftRef: Ref<string> = { value: '' };
+let modelDraftEntity: string | null = null;
+let modelDraftBase: string | null = null;
 
 export function drawInspector(ui: UiContext, state: EditorState): void {
   const screenW = getScreenWidth();
@@ -51,11 +62,13 @@ export function drawInspector(ui: UiContext, state: EditorState): void {
     ? state.world.entities.find(e => e.id === selectedEntityId(state))
     : undefined;
 
-  // Panel grows upward with the userData row count (no scrolling yet).
+  // Panel grows upward with its row counts (no scrolling yet).
   const rowAdvance = Theme.rowHeight + Theme.spacing;
   const udRows = entity ? Object.keys(entity.userData).length : 0;
-  let panelH = 300 + udRows * rowAdvance;
-  const maxH = Math.floor(screenH * 0.65);
+  const tagRows = entity ? entity.tags.length : 0;
+  const tintRows = entity && entity.tint !== null ? 3 : 1;
+  let panelH = 430 + (udRows + tagRows + tintRows) * rowAdvance;
+  const maxH = Math.floor(screenH * 0.78);
   if (panelH > maxH) panelH = maxH;
   const py = screenH - Theme.statusBarHeight - panelH;
 
@@ -67,9 +80,20 @@ export function drawInspector(ui: UiContext, state: EditorState): void {
     return;
   }
 
-  // Name.
-  label(ui, entity.name);
-  labelSmall(ui, entity.id + (entity.modelRef ? '  (' + entity.modelRef + ')' : ''));
+  // Name — editable, coalesced into one undo entry per rename.
+  const nameY = ui.cursorY;
+  drawText('Name', ui.cursorX, nameY + 4, Theme.fontSizeSmall, Theme.textDim);
+  const nameRef: Ref<string> = { value: entity.name };
+  if (textInput(ui, 'insp_name_' + entity.id, nameRef,
+      ui.cursorX + 48, nameY, ui.panelW - Theme.padding * 2 - 48)) {
+    runCommand(state, new RenameEntityCommand(entity.id, entity.name, nameRef.value));
+  }
+  ui.cursorY = nameY + Theme.rowHeight + Theme.spacing;
+
+  labelSmall(ui, entity.id);
+  separator(ui);
+
+  drawModelSection(ui, state, entity);
   separator(ui);
 
   // Transform fields.
@@ -95,16 +119,114 @@ export function drawInspector(ui: UiContext, state: EditorState): void {
     ));
   }
 
-  // Tags.
-  if (entity.tags.length > 0) {
-    separator(ui);
-    labelSmall(ui, 'Tags: ' + entity.tags.join(', '));
-  }
+  separator(ui);
+  drawTintSection(ui, state, entity);
+
+  separator(ui);
+  drawTagsSection(ui, state, entity);
 
   separator(ui);
   drawUserDataSection(ui, state, entity);
 
   endPanel(ui);
+}
+
+// ---- model section -------------------------------------------------------------
+
+function drawModelSection(ui: UiContext, state: EditorState, entity: EntityData): void {
+  if (entity.prefabRef !== null && entity.prefabRef.length > 0) {
+    labelSmall(ui, 'Prefab: ' + entity.prefabRef);
+    return;
+  }
+
+  labelSmall(ui, 'Model');
+
+  // (Re)seed the draft when the selection changes or when the entity's actual
+  // ref changes underneath us (undo/redo) — otherwise a stale draft would
+  // shadow the real value.
+  const current = entity.modelRef !== null ? entity.modelRef : '';
+  if (modelDraftEntity !== entity.id || modelDraftBase !== current) {
+    modelDraftEntity = entity.id;
+    modelDraftBase = current;
+    modelDraftRef.value = current;
+  }
+
+  const rowY = ui.cursorY;
+  textInput(ui, 'insp_model_' + entity.id, modelDraftRef,
+    ui.cursorX, rowY, ui.panelW - Theme.padding * 2);
+  ui.cursorY = rowY + Theme.rowHeight + Theme.spacing;
+
+  if (modelDraftRef.value !== current) {
+    if (button(ui, 'insp_model_apply', 'Apply model ref')) {
+      const next = modelDraftRef.value.trim();
+      runCommand(state, new SetModelRefCommand(entity.id, entity.modelRef,
+        next.length > 0 ? next : null));
+      modelDraftBase = next;
+      if (next.length > 0 && !state.catalog.models.has(next)) {
+        setStatus(state, 'Model "' + next + '" is not in the catalog — placeholder box until it exists.');
+      }
+    }
+  } else if (current.length > 0 && !state.catalog.models.has(current)) {
+    labelSmall(ui, 'not in catalog — placeholder box', Theme.textError);
+  }
+}
+
+// ---- tint section ----------------------------------------------------------------
+
+function drawTintSection(ui: UiContext, state: EditorState, entity: EntityData): void {
+  labelSmall(ui, 'Tint');
+
+  if (entity.tint === null) {
+    if (button(ui, 'insp_tint_add', 'Add tint')) {
+      runCommand(state, new SetTintCommand(entity.id, null, [1, 1, 1, 1]));
+    }
+    return;
+  }
+
+  const before: [number, number, number, number] =
+    [entity.tint[0], entity.tint[1], entity.tint[2], entity.tint[3]];
+  const working: number[] = [before[0], before[1], before[2], before[3]];
+  if (drawColorFields(ui, 'insp_tint', working)) {
+    runCommand(state, new SetTintCommand(entity.id, before,
+      [working[0], working[1], working[2], working[3]]));
+  }
+
+  if (button(ui, 'insp_tint_remove', 'Remove tint')) {
+    runCommand(state, new SetTintCommand(entity.id, before, null));
+  }
+}
+
+// ---- tags section ----------------------------------------------------------------
+
+function drawTagsSection(ui: UiContext, state: EditorState, entity: EntityData): void {
+  labelSmall(ui, 'Tags');
+
+  const delW = 18;
+  const innerW = ui.panelW - Theme.padding * 2;
+
+  for (let i = 0; i < entity.tags.length; i++) {
+    const rowY = ui.cursorY;
+    drawText(entity.tags[i], ui.cursorX, rowY + 4, Theme.fontSizeSmall, Theme.text);
+    if (toolButton(ui, 'tag_del_' + entity.id + '_' + i, 'x',
+        ui.cursorX + innerW - delW, rowY, delW, false)) {
+      const after = entity.tags.slice();
+      after.splice(i, 1);
+      runCommand(state, new SetTagsCommand(entity.id, entity.tags, after));
+    }
+    ui.cursorY = rowY + Theme.rowHeight + Theme.spacing;
+  }
+
+  // Add row: text field + '+' commits (must be non-empty and not a duplicate).
+  const addY = ui.cursorY;
+  textInput(ui, 'tag_new_' + entity.id, newTagRef, ui.cursorX, addY, innerW - delW - 4);
+  if (toolButton(ui, 'tag_add_' + entity.id, '+', ui.cursorX + innerW - delW, addY, delW, false)) {
+    const nt = newTagRef.value.trim();
+    if (nt.length > 0 && entity.tags.indexOf(nt) < 0) {
+      runCommand(state, new SetTagsCommand(entity.id, entity.tags, entity.tags.concat([nt])));
+      newTagRef.value = '';
+    }
+  }
+  ui.cursorY = addY + Theme.rowHeight + Theme.spacing;
 }
 
 // ---- userData table ----------------------------------------------------------

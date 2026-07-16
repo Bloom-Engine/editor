@@ -21,6 +21,10 @@ import { TransformEntityCommand } from '../state/commands/transform-entity';
 import { CreateTerrainCommand } from '../state/commands/create-terrain';
 import { SetUserDataCommand } from '../state/commands/set-userdata';
 import {
+  RenameEntityCommand, SetTintCommand, SetTagsCommand, SetModelRefCommand,
+} from '../state/commands/edit-entity';
+import { SetEnvironmentCommand } from '../state/commands/set-environment';
+import {
   AddTerrainLayerCommand, RemoveTerrainLayerCommand, TerrainPaintCommand, snapshotWeights,
 } from '../state/commands/terrain-paint';
 import { paintCell } from '../tools/brush-tool';
@@ -60,6 +64,8 @@ export function runSelfTests(): number {
   testPrefabAuthoringCycles();
   testPathJoinIdentity();
   testUserDataCommand();
+  testEntityEditCommands();
+  testEnvironmentCommand();
   testWaterCommands();
   testLightMigration();
   testSplatLayerCommands();
@@ -362,6 +368,81 @@ function testUserDataCommand(): void {
 
   undo(state);
   assert(state.world.entities[0].userData['cooldown'] === '5', 'userdata: undo restores removed key');
+}
+
+// PLAN §F2: rename / tint / tags / modelRef, all undoable, rename and tint
+// coalescing like drags do.
+function testEntityEditCommands(): void {
+  const state = createEditorState();
+  runCommand(state, new CreateEntityCommand(createEntity('fe', 'a.glb', [0, 0, 0])));
+  const e = state.world.entities[0];
+  const baseDepth = state.undoStack.length;
+
+  // Rename coalesces per entity: typing is one undo entry, not one per key.
+  runCommand(state, new RenameEntityCommand('fe', 'a', 'ab'));
+  runCommand(state, new RenameEntityCommand('fe', 'ab', 'abc'));
+  assert(e.name === 'abc', 'edit: rename applied');
+  assert(state.undoStack.length === baseDepth + 1, 'edit: renames coalesced');
+  undo(state);
+  assert(e.name === 'a', 'edit: rename undo restores the pre-typing name');
+
+  // Tint: add, drag (coalesced), remove, undo chain.
+  runCommand(state, new SetTintCommand('fe', null, [1, 1, 1, 1]));
+  assert(e.tint !== null && e.tint[0] === 1, 'edit: tint added');
+  runCommand(state, new SetTintCommand('fe', [1, 1, 1, 1], [0.5, 1, 1, 1]));
+  runCommand(state, new SetTintCommand('fe', [0.5, 1, 1, 1], [0.2, 1, 1, 1]));
+  assert(e.tint !== null && Math.abs(e.tint[0] - 0.2) < 0.001, 'edit: tint drag applied');
+  undo(state);
+  assert(e.tint !== null && e.tint[0] === 1, 'edit: tint drag undoes as ONE entry to pre-drag');
+  runCommand(state, new SetTintCommand('fe', e.tint, null));
+  assert(e.tint === null, 'edit: tint removed');
+  undo(state);
+  assert(e.tint !== null, 'edit: tint removal undone');
+
+  // Tags are discrete: no coalescing, exact restore.
+  runCommand(state, new SetTagsCommand('fe', [], ['wall']));
+  runCommand(state, new SetTagsCommand('fe', ['wall'], ['wall', 'stone']));
+  assert(e.tags.length === 2, 'edit: tags added');
+  undo(state);
+  assert(e.tags.length === 1 && e.tags[0] === 'wall', 'edit: tag undo removes only the last');
+
+  // modelRef swap rebuilds the node (destroy+rebuild queued) and undoes.
+  runCommand(state, new SetModelRefCommand('fe', 'a.glb', 'b.glb'));
+  assert(e.modelRef === 'b.glb', 'edit: modelRef swapped');
+  assert(state.pendingRebuild.has('fe'), 'edit: modelRef swap queues a rebuild');
+  undo(state);
+  assert(e.modelRef === 'a.glb', 'edit: modelRef undo restores the original');
+}
+
+// PLAN §I: environment edits go through the undo stack; merging is scoped per
+// field so Ctrl+Z steps field by field, not "the whole tweaking session".
+function testEnvironmentCommand(): void {
+  const state = createEditorState();
+  const origSun = state.world.environment.sunIntensity;
+  const origFog = state.world.environment.fogStart;
+
+  // A drag on one field: many ticks, one undo entry.
+  const depth0 = state.undoStack.length;
+  const b1 = { ...state.world.environment };
+  state.world.environment.sunIntensity = 1.5;
+  runCommand(state, new SetEnvironmentCommand('sunIntensity', b1, state.world.environment));
+  const b2 = { ...state.world.environment };
+  state.world.environment.sunIntensity = 2.0;
+  runCommand(state, new SetEnvironmentCommand('sunIntensity', b2, state.world.environment));
+  assert(state.undoStack.length === depth0 + 1, 'env: same-field edits coalesce');
+  assert(state.pendingEnvironmentSync === true, 'env: sync flagged');
+
+  // A different field starts a new entry.
+  const b3 = { ...state.world.environment };
+  state.world.environment.fogStart = 99;
+  runCommand(state, new SetEnvironmentCommand('fogStart', b3, state.world.environment));
+  assert(state.undoStack.length === depth0 + 2, 'env: different field is a separate entry');
+
+  undo(state);
+  assert(state.world.environment.fogStart === origFog, 'env: fog undo');
+  assert(Math.abs(state.world.environment.sunIntensity - 2.0) < 0.001, 'env: sun survives fog undo');
+  undo(state);
+  assert(Math.abs(state.world.environment.sunIntensity - origSun) < 0.001, 'env: sun undo restores pre-drag');
 }
 
 function testWaterCommands(): void {
