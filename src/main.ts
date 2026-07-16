@@ -28,7 +28,7 @@ import { DuplicateEntityCommand } from './state/commands/duplicate-entity';
 import { RemoveWaterCommand, RemoveRiverCommand } from './state/commands/edit-water';
 
 import { loadProject } from './io/project';
-import { loadAssetCatalog } from './io/asset-catalog';
+import { loadAssetCatalog, pumpAssetCatalog } from './io/asset-catalog';
 import { openWorld, saveCurrentWorld, defaultSavePath } from './io/world-io';
 
 import { updateOrbitCamera, buildCamera3D } from './viewport/orbit-camera';
@@ -42,6 +42,7 @@ import { createUiContext, uiBeginFrame, uiEndFrame } from './ui/ui-context';
 import { createMoveGizmoState, updateMoveGizmo, drawMoveGizmo } from './gizmos/move-gizmo';
 import { createRotateGizmoState, updateRotateGizmo, drawRotateGizmo } from './gizmos/rotate-gizmo';
 import { createScaleGizmoState, updateScaleGizmo, drawScaleGizmo } from './gizmos/scale-gizmo';
+import { createPointGizmoState, updatePointGizmo, drawPointGizmo } from './gizmos/point-gizmo';
 import { updateBrushTool } from './tools/brush-tool';
 import { updateWaterTool, drawWaterVolumes } from './tools/water-tool';
 import { updateRiverTool, drawRiverSplines } from './tools/river-tool';
@@ -59,6 +60,7 @@ import { drawToolbar } from './ui/layouts/toolbar';
 import { drawAssetPanel } from './ui/layouts/asset-panel';
 import { drawInspector } from './ui/layouts/inspector';
 import { drawOutliner } from './ui/layouts/outliner';
+import { drawRecentPanel } from './ui/layouts/recent-panel';
 import { drawStatusBar } from './ui/layouts/status-bar';
 import { runSelfTests } from './tests/self-tests';
 
@@ -103,11 +105,13 @@ const ui = createUiContext();
 const moveGizmo = createMoveGizmoState();
 const rotateGizmo = createRotateGizmoState();
 const scaleGizmo = createScaleGizmoState();
+const pointGizmo = createPointGizmoState();
 
-// Load project + assets.
+// Load project + assets. The catalog only LISTS models here (instant);
+// pumpAssetCatalog in the frame loop streams the GLBs in one per frame, so
+// the old ~20 s black window at startup is gone — the world appears at once
+// as placeholder boxes and meshes pop in as they load.
 loadProject(state, argProjectPath);
-// Blocking: loads every GLB in the project's models dir (~20 s for the
-// shooter's 26 on a mid Windows box). Worth making async — see PLAN.md.
 loadAssetCatalog(state);
 
 if (state.project !== null) {
@@ -273,13 +277,16 @@ while (!windowShouldClose()) {
   drawGroundGrid();
   drawWorldAxes();
 
-  // Update and draw gizmos based on transform mode.
+  // Update and draw gizmos based on transform mode. The point gizmo covers
+  // water / river / light selections, which the entity gizmos bail on.
   updateMoveGizmo(state, moveGizmo);
   updateRotateGizmo(state, rotateGizmo);
   updateScaleGizmo(state, scaleGizmo);
+  updatePointGizmo(state, pointGizmo);
   drawMoveGizmo(moveGizmo);
   drawRotateGizmo(rotateGizmo);
   drawScaleGizmo(scaleGizmo);
+  drawPointGizmo(state, pointGizmo);
 
   // In-progress previews for the water/river tools, plus light markers (a light
   // has no mesh, so without these you cannot see or click one).
@@ -326,6 +333,7 @@ while (!windowShouldClose()) {
     if (state.activeTool === 'select' && state.selection.primary === null && !state.editingPrefab) {
       drawEnvironmentPanel(ui, state);
     }
+    drawRecentPanel(ui, state);
   }
   drawPlaytestOverlay(state);
 
@@ -333,7 +341,7 @@ while (!windowShouldClose()) {
 
   // ---- process viewport click (only if UI didn't capture the mouse) ---------
 
-  if (viewportClicked && !ui.mouseCaptured && !moveGizmo.dragging && !rotateGizmo.dragging && !scaleGizmo.dragging) {
+  if (viewportClicked && !ui.mouseCaptured && !moveGizmo.dragging && !rotateGizmo.dragging && !scaleGizmo.dragging && !pointGizmo.dragging && !pointGizmo.consumedClick) {
     if (state.activeTool === 'place') {
       handlePlaceClick(state);
     } else if (state.activeTool === 'select' || state.activeTool === 'transform') {
@@ -347,6 +355,14 @@ while (!windowShouldClose()) {
   updateWaterTool(state);
   updateRiverTool(state);
   updateLightTool(state);
+
+  // ---- stream in pending models (one GLB per frame) --------------------------
+
+  const pendingModels = pumpAssetCatalog(state, 1);
+  if (pendingModels > 0) {
+    state.statusMessage = 'Loading models… ' + pendingModels + ' remaining';
+    state.statusMessageT = 0.5;
+  }
 
   // ---- world sync (at the end of the frame) --------------------------------
 

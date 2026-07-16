@@ -37,10 +37,11 @@ export interface ModelEntry {
   relPath: string;           // Relative to project root, e.g. "assets/models/tree_oak.glb".
   displayName: string;       // Filename without extension.
   category: string;          // Derived from prefix: "tree_", "flower_", etc.
-  modelHandle: number;       // Bloom Model.handle after loading.
+  modelHandle: number;       // Bloom Model.handle after loading; 0 until then.
   boundsMin: Vec3Lit;
   boundsMax: Vec3Lit;
-  loaded: boolean;
+  loaded: boolean;           // Set by pumpAssetCatalog when the GLB arrives.
+  failed: boolean;           // Unreadable GLB — never retried, stays placeholder.
 }
 
 // NB: AssetCatalog and HandleMap are CLASSES, not interfaces, and that is
