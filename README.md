@@ -6,12 +6,11 @@ Like everything in the Bloom ecosystem, the editor is written in TypeScript and 
 
 ## Status
 
-Core editing works; several planned features are unfinished. **[`PLAN.md`](PLAN.md)** contains a full verified audit (what works, what's broken, with file/line references) and the completion plan, including a definition of done. In short:
+Feature-complete against **[`PLAN.md`](PLAN.md)**'s definition of done (the plan retains the full audit trail): entity placement/selection/duplication, move/rotate/scale gizmos, terrain sculpting **and** splat painting, water volumes and rivers (placeable, selectable, gizmo-draggable — including per-control-point river handles), point lights, prefab authoring with cycle rejection, rename/tint/tags/modelRef editing, free-form `userData` editing, a full environment panel, asset thumbnails, recent projects, play-in-editor (Ctrl+R runs the real game on the level on screen), fly-camera playtest, and undo/redo behind **every** mutation. Save/load is semantically lossless, proven by self-tests that round-trip real shipped worlds.
 
-- **Working today:** opens the shooter project and renders `arena_02` (entities with no model — spawners, pickups, colliders — draw as colored, pickable placeholder boxes); entity placement and selection, move/rotate/scale gizmos, terrain sculpting, undo/redo, save/load with autosave, `userData` key/value editing, environment panel, fly-camera playtest mode.
-- **Not finished yet:** prefab authoring UI, terrain texture painting, water/river editing beyond initial placement, asset thumbnails, recent-projects UI.
+The editor is game-agnostic: it opens any project with an `editor.project.json`, or any bare `*.world.json` via `--world <path>` (`--project <path>` skips the CWD walk). The adoption contract for new games is [`engine/docs/world-format.md`](https://github.com/Bloom-Engine/engine/blob/main/docs/world-format.md); the engine's `examples/world-viewer` is the reference consumer.
 
-Startup blocks for ~20 s while every GLB in the project's models dir is loaded synchronously (26 for the shooter). The window is black until that finishes — it is loading, not hung.
+Models stream in one per frame at startup — the world appears immediately with colored placeholder boxes that pop into real meshes as their GLBs load (a status line counts down). Remaining slivers are tracked at the top of PLAN.md (prefab-tab thumbnails; optional `postSaveCommand` hook).
 
 ### Platform notes
 
