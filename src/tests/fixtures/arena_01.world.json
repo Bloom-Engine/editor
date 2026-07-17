@@ -1,0 +1,315 @@
+{
+  "schemaVersion": 2,
+  "name": "Arena 01",
+  "id": "arena_01",
+  "bounds": {
+    "min": [
+      -30,
+      -5,
+      -30
+    ],
+    "max": [
+      30,
+      20,
+      30
+    ]
+  },
+  "environment": {
+    "skyColor": [
+      0.08,
+      0.08,
+      0.1
+    ],
+    "ambientColor": [
+      0.5,
+      0.5,
+      0.7
+    ],
+    "ambientIntensity": 0.35,
+    "sunDirection": [
+      -0.3,
+      -0.9,
+      -0.2
+    ],
+    "sunColor": [
+      1.0,
+      0.95,
+      0.85
+    ],
+    "sunIntensity": 1.0,
+    "fogStart": 25,
+    "fogEnd": 80,
+    "fogColor": [
+      0.08,
+      0.08,
+      0.12
+    ],
+    "shadowsEnabled": true
+  },
+  "terrain": null,
+  "entities": [
+    {
+      "id": "spawn_1",
+      "name": "player_spawn",
+      "modelRef": "assets/models/_gizmo_box.glb",
+      "prefabRef": null,
+      "transform": {
+        "position": [
+          0,
+          1,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "tint": null,
+      "tags": [
+        "logic"
+      ],
+      "userData": {
+        "kind": "player_spawn",
+        "primary": "1",
+        "yaw": "0"
+      }
+    },
+    {
+      "id": "floor",
+      "name": "floor",
+      "modelRef": "assets/models/_gizmo_box.glb",
+      "prefabRef": null,
+      "transform": {
+        "position": [
+          0,
+          -0.5,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "tint": null,
+      "tags": [
+        "static"
+      ],
+      "userData": {
+        "kind": "collider_box",
+        "halfExtents": "25,0.5,25",
+        "static": "1"
+      }
+    },
+    {
+      "id": "wall_n",
+      "name": "wall_n",
+      "modelRef": "assets/models/_gizmo_box.glb",
+      "prefabRef": null,
+      "transform": {
+        "position": [
+          0,
+          2.5,
+          -25
+        ],
+        "rotation": [
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "tint": null,
+      "tags": [
+        "static"
+      ],
+      "userData": {
+        "kind": "collider_box",
+        "halfExtents": "25,3,0.5",
+        "static": "1"
+      }
+    },
+    {
+      "id": "wall_s",
+      "name": "wall_s",
+      "modelRef": "assets/models/_gizmo_box.glb",
+      "prefabRef": null,
+      "transform": {
+        "position": [
+          0,
+          2.5,
+          25
+        ],
+        "rotation": [
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "tint": null,
+      "tags": [
+        "static"
+      ],
+      "userData": {
+        "kind": "collider_box",
+        "halfExtents": "25,3,0.5",
+        "static": "1"
+      }
+    },
+    {
+      "id": "wall_e",
+      "name": "wall_e",
+      "modelRef": "assets/models/_gizmo_box.glb",
+      "prefabRef": null,
+      "transform": {
+        "position": [
+          25,
+          2.5,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "tint": null,
+      "tags": [
+        "static"
+      ],
+      "userData": {
+        "kind": "collider_box",
+        "halfExtents": "0.5,3,25",
+        "static": "1"
+      }
+    },
+    {
+      "id": "wall_w",
+      "name": "wall_w",
+      "modelRef": "assets/models/_gizmo_box.glb",
+      "prefabRef": null,
+      "transform": {
+        "position": [
+          -25,
+          2.5,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "tint": null,
+      "tags": [
+        "static"
+      ],
+      "userData": {
+        "kind": "collider_box",
+        "halfExtents": "0.5,3,25",
+        "static": "1"
+      }
+    },
+    {
+      "id": "spawner_a",
+      "name": "spawner_a",
+      "modelRef": "assets/models/_gizmo_box.glb",
+      "prefabRef": null,
+      "transform": {
+        "position": [
+          15,
+          0,
+          -15
+        ],
+        "rotation": [
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "tint": null,
+      "tags": [
+        "logic"
+      ],
+      "userData": {
+        "kind": "enemy_spawner",
+        "enemyType": "dretch",
+        "waveBits": "1,2,3",
+        "maxAlive": "3",
+        "cooldown": "1.2"
+      }
+    },
+    {
+      "id": "cfg_waves",
+      "name": "waves",
+      "modelRef": "assets/models/_gizmo_box.glb",
+      "prefabRef": null,
+      "transform": {
+        "position": [
+          0,
+          0,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "tint": null,
+      "tags": [
+        "logic"
+      ],
+      "userData": {
+        "kind": "wave_config",
+        "waves": "[{\"count\":5,\"enemy\":\"dretch\"},{\"count\":10,\"enemy\":\"dretch\"},{\"count\":20,\"enemy\":\"dretch\"}]"
+      }
+    }
+  ],
+  "lights": [],
+  "water": [],
+  "rivers": [],
+  "metadata": {
+    "gameId": "shooter"
+  }
+}

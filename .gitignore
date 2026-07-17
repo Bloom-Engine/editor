@@ -12,3 +12,6 @@ dist/
 
 # Crash dumps written by the engine crash filter during debugging
 tools/.testout/
+
+# Scratch output written by `main --test` (round-trip self-tests)
+/__selftest_*

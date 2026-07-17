@@ -7,8 +7,12 @@ Still outstanding: **F2** (rename/tint/tags/modelRef editing), **F3** (outliner
 depth), **G** (asset thumbnails — `renderAllThumbnails`/`getThumbnail` still have
 zero call sites), **H** (recent-projects UI — the write path runs every launch and
 nothing reads it), **I** (environment panel — still mutates directly, no
-`SetEnvironmentCommand`), **K1** (a REAL round-trip test — see the correction at
-§K1) and **K2** (see the correction there — its premise is void).
+`SetEnvironmentCommand`), and **K2** (see the correction there — its premise is
+void). ~~**K1**~~ shipped 2026-07-15 (evening) — see the correction at §K1.
+
+**Part 4 (added 2026-07-15) extends scope:** the editor should edit **any world
+for any game** that uses the world format. It carries its own audit and phased
+plan; Phase 1 (file trust) is already landed.
 
 This document is self-contained: it is written for an implementer with no prior context. It replaces the original design plan (which was deleted). Part 1 is a verified audit of the current state, Part 2 defines "done", Part 3 is the work plan. This is a **single unified scope** — do not cut it down to an MVP; if a task has a prerequisite, the prerequisite is in scope too.
 
@@ -319,8 +323,16 @@ Keep fly-cam as the core mode (matches original scope). Stretch, only if trivial
 
 ### K. Shooter round-trip & integration proof
 
-- **K1. Automated lossless round-trip test:** ⚠️ **STILL OUTSTANDING, and the
-  test that exists is actively MISLEADING (flagged 2026-07-15).**
+- **K1. Automated lossless round-trip test:** ✅ **DONE (2026-07-15 evening).**
+  Fixture copies of both arenas live in `src/tests/fixtures/`;
+  `testWorldFileRoundTrip` runs `loadWorld` → `saveWorld` → parse both → structural
+  deep-compare with dotted-path diff reporting (`deepJsonEqual`), and passes for
+  both — the saver is semantically lossless on real worlds, including arena_02's
+  terrain + splat layers. The synthetic `JSON.stringify` test described below is
+  **deleted**, replaced by the real thing. A companion `testPrefabFileRoundTrip`
+  pins the prefab saver (see Part 4 §P1 — it was NOT lossless until today).
+  Original flag, kept for history: ⚠️ **the
+  test that existed was actively MISLEADING (flagged 2026-07-15).**
   `testWorldRoundTrip` in `src/tests/self-tests.ts` round-trips a *synthetic*
   2-entity world with `JSON.stringify` — it never calls `saveWorld`, and
   `JSON.stringify` is the very idiom quirk #6 says corrupts a parsed graph (the
@@ -340,3 +352,74 @@ Keep fly-cam as the core mode (matches original scope). Stretch, only if trivial
 ### Verification expectations
 
 Every task lands with its self-test where the logic is testable headless (commands, round-trip, paint kernel, selection model), and the implementer should run the editor against the shooter project after each group — the acceptance criteria above are written to be executed, not assumed.
+
+---
+
+## Part 4 — Any world, any game (added 2026-07-15)
+
+**Goal:** this editor edits any world for any game that uses the world format. Parts 1–3 made it a working editor for the shooter's worlds; Part 4 is what separates that from a general tool. Audited 2026-07-15 (editor source, engine world module, and all four game repos); plan follows.
+
+### 4.1 Audit — where the "any game" claim actually stands
+
+**The editor is already game-agnostic in behavior.** A full sweep found no hard game dependency: game semantics stay opaque in `userData`/`tags`/`metadata`, the editor never injects or interprets shooter vocabulary for behavior, and every `editor.project.json` key is optional. What remains is soft coupling:
+
+- `KIND_COLORS` / `MESH_TAG_COLORS` (`src/world-sync/sync.ts:93-108`) hardcode shooter kind names for placeholder-cube colors. Unknown kinds fall through to a stable hash-hue, so nothing breaks — but the curated map should come from project config.
+- `userData['halfExtents']` (`sync.ts:144-154`) sizes placeholder cubes — a convention, not a contract; other games get unit cubes.
+- Play-in-editor requires the game to accept `--world <path>` (`src/playtest/launch.ts:47-48`). Reasonable, but written down nowhere.
+- No-project mode works (bare `.world.json` opens, edits, saves) but renders every model-backed entity as a magenta cube — the catalog is empty without a project.
+- `gameId` is parsed from the project file and silently discarded (`src/io/project.ts:33`).
+- Asset catalog startup is fully synchronous (`src/io/asset-catalog.ts:55-76`) — ~20 s black window on the shooter's 26 GLBs; scales with the game.
+
+**The ecosystem is where the claim fails today.** Shooter is the world format's *only* consumer — and it spawns via its own flat-array code (`shooter/src/world-runtime.ts`), so **`instantiateWorld` still has zero game consumers** and the whole generic render path (§C's "a river cannot look different in-game" guarantee) remains unproven outside the editor. Garden ignores the format entirely (hardcoded single-file scene — two `drawCube` calls and 12 constant-array collectibles). Jump is 2D with its own text format and own editor; structurally out of scope. No engine example loads a world. "Any game that uses the world format" currently describes a set of one, whose loader was co-designed with this editor.
+
+**Two file-trust defects found (both FIXED same day, see §P1):**
+
+1. **Prefab round-trip was not lossless.** `serializePrefab` (`engine/src/world/serialize.ts`) wrote only `id`/`name`/`children` — `schemaVersion` was dropped and silently backfilled by migration on reload (hiding the loss), and `bounds` was dropped outright, coming back `undefined`. `createEmptyPrefab` also stamped `schemaVersion: 1` on a v2 schema.
+2. **Unknown fields are silently stripped on save.** Validation tolerates unknown fields (correctly — forward compat) but the schema-explicit saver drops them, so a game's extension field survives load and vanishes on the first Ctrl+S with no warning anywhere. For a tool that claims to edit other games' data, silent data loss is the worst failure mode. (Preserving arbitrary unknown fields through the literal-key serializer is not realistic under Perry — see serialize.ts's header — so the honest contract is *detect and warn loudly*, plus sanctioned extension points that DO round-trip: `world.metadata`, `entity.userData`, `entity.tags`.)
+
+### 4.2 Definition of done — "any game"
+
+1. Both shooter arenas round-trip semantically losslessly under an automated test that runs the REAL save path. *(done — §P1)*
+2. Prefabs round-trip losslessly, including `schemaVersion` and `bounds`. *(done — §P1)*
+3. A file containing fields this editor doesn't know produces a loud warning at load — console and status bar — naming the fields, before the user can save. *(done — §P1)*
+4. A written contract exists (engine repo) that a third game can implement without reading shooter source: world schema + extension points, `editor.project.json` keys, `--world` convention, `userData.kind` discrimination pattern.
+5. `instantiateWorld` has at least one consumer that renders a world outside the editor (engine `world-viewer` example), and one real game consumer (garden).
+6. A world authored **from scratch in the editor** plays in a game that is not the shooter.
+7. The editor opens: a bare world with no project file, a project with unknown `userData` vocabularies, and a 500-entity world — without data loss and without the UI becoming unusable (outliner must scroll/filter).
+
+### 4.3 Work plan
+
+#### P1. File trust — ✅ DONE (2026-07-15 evening)
+
+> The editor's core promise to another game is "I will not damage your data."
+>
+> - **P1a** Real world round-trip test (was K1): fixtures + `loadWorld` → `saveWorld` → parse → `deepJsonEqual` (dotted-path diffs, both directions of key diff). Both arenas pass. The synthetic `JSON.stringify` test is deleted.
+> - **P1b** Prefab round-trip fixed in the engine: `serializePrefab` now writes `schemaVersion` + `bounds`; `migratePrefabData` backfills degenerate bounds for pre-fix files; `createEmptyPrefab` stamps the current version. Pinned by `testPrefabFileRoundTrip`.
+> - **P1c** Unknown-field policy implemented: `listUnknownWorldFields` / `listUnknownPrefabFields` (`engine/src/world/validate.ts`) walk every schema level and return dotted paths. `loadWorld`/`loadPrefab` `console.error` each one (stderr survives crashes; stdout doesn't); the editor's `openWorld` additionally posts a status-bar warning naming the count and first offender BEFORE the user can save. Extension points that do round-trip are documented at the checker. Pinned by `testUnknownFieldDetection` (clean world lists nothing — false positives would spam every load).
+>
+> 129 self-tests pass via `./main --test`.
+
+#### P2. The contract — write down what "uses the world format" means
+
+- **P2a** `engine/docs/world-format.md`: the schema (or a blessed pointer to `types.ts`), the three sanctioned extension points and the strip-warning behavior, `editor.project.json` — all eight keys, defaults, "all optional" — the `--world <path>` play convention, and the recommended `userData.kind` pattern with `halfExtents` et al. documented as conventions. Acceptance: a third game could adopt the format from this doc alone, without reading shooter source.
+- **P2b** De-shooterize the soft spots: optional project key (e.g. `kindColors`) feeding the placeholder map, hash fallback stays the default; either use `gameId` or stop parsing it.
+- **P2c** Editor CLI: `--project <path>` and `--world <path>` args (argv handling already exists for `--test`), so any world can be opened without dialogs. Acceptance: `./main --world ../somegame/assets/worlds/x.world.json` opens it.
+
+#### P3. The proof — a second consumer
+
+- **P3a** Engine `world-viewer` example (~100 LOC): `loadWorld` + `instantiateWorld` + `applyWorldLights` + fly camera on any path handed to it. First consumer of `instantiateWorld`; becomes the conformance harness for the generic path (terrain, splat layers, water, rivers, lights outside the editor) and the "hello world" for adopters. ⚠ verify-first: `instantiateWorld` has never run in a game — expect the §C1-era acceptance that was "never executable" to surface real gaps here.
+- **P3b** Port **garden** to the world format. Its scene maps directly (island → terrain or flat entities, water plane → water volume, 12 collectibles → entities with `userData.kind: "bloom"`), and it exercises the exact path shooter doesn't: a world **authored from scratch in the editor**, loaded via **`instantiateWorld`**. Acceptance: a garden level built in the editor plays in garden. Decision needed first: adoption as product direction vs. testbed branch — garden has a GDD; don't fight its design (§4.4 Q1).
+
+#### P4. Generic editing depth (Part 3's F/H/I items, re-prioritized for foreign worlds)
+
+Order changes because the customer is now "someone else's world": **F3 first and split** — scrolling + a filter box are prerequisites for opening any large world (66 entities already buries the list; the panel cannot scroll at all — `outliner.ts:35,73`), rename/per-row ops can follow. Then **F2** with modelRef reassignment leading (remapping asset paths is the first thing editing a foreign world needs), then **I** (env completeness + `SetEnvironmentCommand`), then water/river gizmo manipulation (§C tail), then **H** (recent projects — the multi-game switching workflow). **J** stays stretch.
+
+#### P5. Polish
+
+Async/lazy asset catalog (the 20 s blocking startup punishes exactly the big new game this is for; models on demand, catalog listing stays instant), then **G** thumbnails as the natural background job once loading is async.
+
+### 4.4 Open questions
+
+1. Garden adoption: product direction or testbed? (P3b blocks on this; P3a doesn't.)
+2. Should unknown-field warnings eventually harden into a versioned-strict mode (error, not warning, when `schemaVersion` claims current)? Today: warn only.
+3. Does `world-viewer` belong in `engine/examples/` (sibling to `perry-embed`) or as a `--view` mode of the editor binary? Leaning examples/ — the point is proving the path with zero editor code in the loop.
