@@ -32,6 +32,7 @@ import {
   enterNewPrefabMode, enterPrefabEditMode, exitPrefabMode, wouldCycle,
 } from '../tools/prefab-tool';
 import { joinPath, projectRelative } from '../io/paths';
+import { mouseToWorldRay, rayPlaneIntersect } from '../viewport/ray';
 
 let passed = 0;
 let failed = 0;
@@ -63,6 +64,7 @@ export function runSelfTests(): number {
   testPrefabAuthoringMode();
   testPrefabAuthoringCycles();
   testPathJoinIdentity();
+  testMouseRay();
   testUserDataCommand();
   testEntityEditCommands();
   testEnvironmentCommand();
@@ -690,6 +692,50 @@ function testPathJoinIdentity(): void {
   assert(projectRelative('../shooter', 'assets/models/unrelated.glb')
     === 'assets/models/unrelated.glb',
     'paths: a path outside the root passes through untouched');
+}
+
+// --- Mouse-ray unprojection ----------------------------------------------------
+//
+// This exists to EXECUTE mouseToWorldRay headless, not just to check its math:
+// Perry 0.5.1208 miscompiled the previous body into a load from absolute
+// address 8 (see the header comment in viewport/ray.ts), so the editor died
+// with 0xc0000005 on the first placement click — and nothing in the suite ever
+// CALLED the function, so 152 tests stayed green over a binary that crashed on
+// click one. If the miscompile ever comes back, this test takes the whole
+// --test run down with the same AV, which is exactly the alarm we want.
+function testMouseRay(): void {
+  const state = createEditorState();
+  const cam = state.camera;
+
+  // A ray through the viewport center must go from the eye toward the target.
+  const ray = mouseToWorldRay(cam, 640, 400, 1280, 800, 240, 36, 800, 728);
+  const dLen = Math.sqrt(ray.direction[0] * ray.direction[0] +
+    ray.direction[1] * ray.direction[1] + ray.direction[2] * ray.direction[2]);
+  assert(Math.abs(dLen - 1) < 0.001, 'ray: direction is normalized (got ' + dLen + ')');
+  assert(ray.origin[0] === ray.origin[0] && ray.direction[0] === ray.direction[0],
+    'ray: no NaNs');
+
+  const toTargetX = cam.target[0] - ray.origin[0];
+  const toTargetY = cam.target[1] - ray.origin[1];
+  const toTargetZ = cam.target[2] - ray.origin[2];
+  const dot = ray.direction[0] * toTargetX + ray.direction[1] * toTargetY +
+    ray.direction[2] * toTargetZ;
+  assert(dot > 0, 'ray: center ray points toward the orbit target');
+
+  // Aim from above at the ground plane: the hit must land under the camera-ish,
+  // and off-center rays must land off-center in the matching direction.
+  const centerHit = rayPlaneIntersect(ray, [0, 0, 0], [0, 1, 0]);
+  assert(centerHit !== null, 'ray: center ray hits the ground plane');
+
+  const leftRay = mouseToWorldRay(cam, 340, 400, 1280, 800, 240, 36, 800, 728);
+  const leftHit = rayPlaneIntersect(leftRay, [0, 0, 0], [0, 1, 0]);
+  assert(leftHit !== null, 'ray: left-of-center ray hits the ground plane');
+  if (centerHit !== null && leftHit !== null) {
+    const dxc = leftHit[0] - centerHit[0];
+    const dzc = leftHit[2] - centerHit[2];
+    assert(Math.sqrt(dxc * dxc + dzc * dzc) > 0.01,
+      'ray: different pixels produce different ground hits');
+  }
 }
 
 // ---- Splat layers (PLAN §D) -------------------------------------------------
