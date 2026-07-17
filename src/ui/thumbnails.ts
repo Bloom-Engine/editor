@@ -1,61 +1,37 @@
-// Asset panel 3D model thumbnails. Uses Q1 render targets to pre-render each
-// GLB model into a 128x128 texture at editor startup.
+// Asset-panel model thumbnails (PLAN §G) — render pass currently DISABLED.
 //
-// Flow:
-//   1. For each model in the catalog, create a render texture
-//   2. Set up a tight orthographic camera framing the model's bounding box
-//   3. beginTextureMode → beginMode3D → drawModel → endMode3D → endTextureMode
-//   4. Store the texture handle in the catalog entry for drawTexture in the panel
+// The first implementation called beginTextureMode/endTextureMode mid-frame,
+// raylib-style. The engine's render targets don't work that way: the override
+// set by begin_texture_mode is consumed at END_FRAME ("the next end_frame will
+// render to this texture view instead of the surface" — renderer/mod.rs), and
+// 2D draws batch for the frame. So the thumbnail textures stayed empty and the
+// grid drew invisible images over dark panel — screenshot-verified 2026-07-16.
 //
-// If render targets are not yet functional (begin/endTextureMode are stubs),
-// this module gracefully falls back to no-op and the asset panel shows text.
+// Rendering a mesh into a texture on this engine needs either (a) a dedicated
+// whole frame per thumbnail with the world's scene nodes hidden, or (b) a real
+// engine-side render-mesh-to-texture utility. Until one of those exists, the
+// asset panel draws colored placeholder cells (visible, clickable, labeled) —
+// see asset-panel.ts. The API here stays so the grid lights up the day the
+// engine call exists.
 
-import {
-  loadRenderTexture, beginTextureMode, endTextureMode, getRenderTextureTexture,
-} from 'bloom';
-import {
-  beginMode3D, endMode3D, clearBackground, drawModel, beginDrawing, endDrawing,
-} from 'bloom';
-import { EditorState, ModelEntry } from '../state/editor-state';
+import { EditorState } from '../state/editor-state';
 
-const THUMB_SIZE = 128;
+export const THUMB_SIZE = 128;
 
 export interface ThumbnailEntry {
-  textureId: number;   // Bloom texture id for drawTexture. 0 if not yet rendered.
+  textureHandle: number;
   width: number;
   height: number;
 }
 
-// Map from model relPath -> thumbnail texture id.
-const thumbnails = new Map<string, ThumbnailEntry>();
-
-// Render thumbnails for all loaded models. Call once after loadAssetCatalog.
-// This is a synchronous batch operation — each model gets one render-to-texture
-// cycle. For 20 models at 128x128 this takes <100ms on any modern GPU.
-export function renderAllThumbnails(state: EditorState): void {
-  for (const [relPath, entry] of state.catalog.models) {
-    if (!entry.loaded || entry.modelHandle === 0) continue;
-    if (thumbnails.has(relPath)) continue;
-
-    const rt = loadRenderTexture(THUMB_SIZE, THUMB_SIZE);
-    if (rt === 0) {
-      // Render targets not available — skip silently.
-      return;
-    }
-
-    const tex = getRenderTextureTexture(rt);
-    const texId = typeof tex === 'object' ? (tex as any).id : tex as number;
-
-    thumbnails.set(relPath, {
-      textureId: texId,
-      width: THUMB_SIZE,
-      height: THUMB_SIZE,
-    });
-  }
+// No-op while the render pass is disabled. Returns 0 = "nothing pending" so
+// main.ts never waits on it.
+export function pumpThumbnails(_state: EditorState, _maxPerFrame: number): number {
+  return 0;
 }
 
-// Get the thumbnail texture id for a model, or 0 if not rendered.
-export function getThumbnail(relPath: string): ThumbnailEntry | null {
-  const entry = thumbnails.get(relPath);
-  return entry ? entry : null;
+// Always null while the render pass is disabled — the asset panel then draws
+// its colored placeholder cell.
+export function getThumbnail(_relPath: string): ThumbnailEntry | null {
+  return null;
 }

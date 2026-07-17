@@ -1,69 +1,95 @@
-// Environment inspector panel — edit sky, lighting, fog, shadows.
-// Changes apply live via the pendingEnvironmentSync flag.
+// Environment inspector panel — edit sky, sun, ambient, fog, shadows.
+// Every field covers the full EnvironmentData schema (sunColor, ambientColor,
+// and fogColor included), and every edit goes through SetEnvironmentCommand
+// so Ctrl+Z works. Per-field merge keys mean one undo entry per slider drag.
 
 import { UiContext } from '../ui-context';
 import { beginPanel, endPanel, separator, dragFloat, vec3Field, toggleButton, Ref } from '../widgets';
 import { Theme } from '../theme';
 import { EditorState } from '../../state/editor-state';
+import { runCommand } from '../../state/commands';
+import { SetEnvironmentCommand, cloneEnvironment } from '../../state/commands/set-environment';
 import { Vec3Lit } from 'bloom/world';
 
 export function drawEnvironmentPanel(ui: UiContext, state: EditorState): void {
-  // Only visible when no entity is selected (or via a toggle).
-  // For now, always draw in a floating panel position.
   const px = Theme.outlinerWidth + 10;
   const py = Theme.toolbarHeight + 10;
   const pw = 260;
-  const ph = 360;
+  const ph = 560;
 
   beginPanel(ui, 'env_panel', px, py, pw, ph, 'Environment');
 
   const env = state.world.environment;
-  let dirty = false;
+  // Snapshot for the command's `before`; taken once per frame, so a drag
+  // commits (previous frame's value -> this frame's value) each tick and the
+  // merge collapses the whole drag into one undo entry.
+  const before = cloneEnvironment(env);
+
+  const commit = (fieldKey: string): void => {
+    runCommand(state, new SetEnvironmentCommand(fieldKey, before, env));
+  };
 
   // Sky color.
   const skyRef: Ref<Vec3Lit> = { value: env.skyColor };
   if (vec3Field(ui, 'env_sky', 'Sky Color', skyRef)) {
     env.skyColor = skyRef.value;
-    dirty = true;
+    commit('skyColor');
   }
 
   separator(ui);
 
-  // Sun direction.
+  // Sun.
   const sunDirRef: Ref<Vec3Lit> = { value: env.sunDirection };
   if (vec3Field(ui, 'env_sundir', 'Sun Dir', sunDirRef)) {
     env.sunDirection = sunDirRef.value;
-    dirty = true;
+    commit('sunDirection');
   }
 
-  // Sun intensity.
+  const sunColRef: Ref<Vec3Lit> = { value: env.sunColor };
+  if (vec3Field(ui, 'env_suncol', 'Sun Color', sunColRef)) {
+    env.sunColor = clampColor(sunColRef.value);
+    commit('sunColor');
+  }
+
   const sunIntRef: Ref<number> = { value: env.sunIntensity };
   if (dragFloat(ui, 'env_sunint', 'Sun Int', sunIntRef, 0.01, 0, 5)) {
     env.sunIntensity = sunIntRef.value;
-    dirty = true;
+    commit('sunIntensity');
   }
 
   separator(ui);
 
-  // Ambient intensity.
+  // Ambient.
+  const ambColRef: Ref<Vec3Lit> = { value: env.ambientColor };
+  if (vec3Field(ui, 'env_ambcol', 'Ambient Color', ambColRef)) {
+    env.ambientColor = clampColor(ambColRef.value);
+    commit('ambientColor');
+  }
+
   const ambIntRef: Ref<number> = { value: env.ambientIntensity };
-  if (dragFloat(ui, 'env_ambint', 'Ambient', ambIntRef, 0.01, 0, 2)) {
+  if (dragFloat(ui, 'env_ambint', 'Ambient Int', ambIntRef, 0.01, 0, 2)) {
     env.ambientIntensity = ambIntRef.value;
-    dirty = true;
+    commit('ambientIntensity');
   }
 
   separator(ui);
 
   // Fog.
+  const fogColRef: Ref<Vec3Lit> = { value: env.fogColor };
+  if (vec3Field(ui, 'env_fogcol', 'Fog Color', fogColRef)) {
+    env.fogColor = clampColor(fogColRef.value);
+    commit('fogColor');
+  }
+
   const fogStartRef: Ref<number> = { value: env.fogStart };
   if (dragFloat(ui, 'env_fogs', 'Fog Start', fogStartRef, 0.5, 0, 500)) {
     env.fogStart = fogStartRef.value;
-    dirty = true;
+    commit('fogStart');
   }
   const fogEndRef: Ref<number> = { value: env.fogEnd };
   if (dragFloat(ui, 'env_foge', 'Fog End', fogEndRef, 0.5, 0, 500)) {
     env.fogEnd = fogEndRef.value;
-    dirty = true;
+    commit('fogEnd');
   }
 
   separator(ui);
@@ -71,13 +97,18 @@ export function drawEnvironmentPanel(ui: UiContext, state: EditorState): void {
   // Shadows.
   if (toggleButton(ui, 'env_shadows', 'Shadows', env.shadowsEnabled)) {
     env.shadowsEnabled = !env.shadowsEnabled;
-    dirty = true;
-  }
-
-  if (dirty) {
-    state.pendingEnvironmentSync = true;
-    state.modified = true;
+    commit('shadowsEnabled');
   }
 
   endPanel(ui);
+}
+
+function clampColor(c: Vec3Lit): Vec3Lit {
+  return [clamp01(c[0]), clamp01(c[1]), clamp01(c[2])];
+}
+
+function clamp01(v: number): number {
+  if (v < 0) return 0;
+  if (v > 1) return 1;
+  return v;
 }

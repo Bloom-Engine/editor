@@ -3,11 +3,13 @@
 
 import {
   isMouseButtonDown, getMouseDeltaX, getMouseDeltaY, getMouseWheel,
+  getMouseX, getMouseY, getScreenWidth, getScreenHeight,
   MouseButton,
 } from 'bloom';
-import { EditorState, OrbitCamera } from '../state/editor-state';
+import { EditorState, OrbitCamera, cameraEyePosition } from '../state/editor-state';
+import { mouseToWorldRay, rayPlaneIntersect } from './ray';
 
-const MIN_DISTANCE = 1;
+const MIN_DISTANCE = 0.2;
 const MAX_DISTANCE = 500;
 const MIN_PITCH = -1.4;
 const MAX_PITCH = 1.4;
@@ -51,31 +53,52 @@ export function updateOrbitCamera(state: EditorState): void {
     cam.dirty = true;
   }
 
-  // Zoom (scroll wheel).
+  // Zoom (scroll wheel) — a dolly toward what the CURSOR is over, not toward
+  // the orbit target. Zooming used to approach the world center only, so
+  // "get close to that house at the edge" required knowing about middle-drag
+  // pan first. Gated on the viewport so scrolling a panel no longer also
+  // zooms the world.
   if (wheel !== 0) {
-    if (wheel > 0) {
-      cam.distance = cam.distance / ZOOM_SPEED;
-    } else {
-      cam.distance = cam.distance * ZOOM_SPEED;
+    const mx = getMouseX();
+    const my = getMouseY();
+    const inViewport = mx > state.viewportLeft && mx < state.viewportRight &&
+                       my > state.viewportTop && my < state.viewportBottom;
+    if (inViewport) {
+      // Pivot: where the cursor ray meets the ground plane. Computed BEFORE
+      // the distance changes (the ray depends on the eye). Cursor over the
+      // sky → no pivot → plain zoom on the current target.
+      let pivot: [number, number, number] | null = null;
+      if (wheel > 0) {
+        const vw = state.viewportRight - state.viewportLeft;
+        const vh = state.viewportBottom - state.viewportTop;
+        const ray = mouseToWorldRay(cam, mx, my, getScreenWidth(), getScreenHeight(),
+          state.viewportLeft, state.viewportTop, vw, vh);
+        pivot = rayPlaneIntersect(ray, [0, 0, 0], [0, 1, 0]);
+      }
+
+      // Honor multi-notch wheel deltas (trackpads and fast flicks).
+      const notches = Math.abs(wheel);
+      const factor = Math.pow(ZOOM_SPEED, notches);
+      const before = cam.distance;
+      if (wheel > 0) cam.distance = cam.distance / factor;
+      else cam.distance = cam.distance * factor;
+      if (cam.distance < MIN_DISTANCE) cam.distance = MIN_DISTANCE;
+      if (cam.distance > MAX_DISTANCE) cam.distance = MAX_DISTANCE;
+
+      // Slide the orbit target toward the pivot by the zoom fraction, so
+      // repeated notches converge on the point under the cursor.
+      if (pivot !== null && before > 0) {
+        const t = 1 - cam.distance / before;
+        cam.target[0] += (pivot[0] - cam.target[0]) * t;
+        cam.target[1] += (pivot[1] - cam.target[1]) * t;
+        cam.target[2] += (pivot[2] - cam.target[2]) * t;
+      }
+      cam.dirty = true;
     }
-    if (cam.distance < MIN_DISTANCE) cam.distance = MIN_DISTANCE;
-    if (cam.distance > MAX_DISTANCE) cam.distance = MAX_DISTANCE;
-    cam.dirty = true;
   }
 }
 
-// Compute the world-space eye position from the orbit parameters.
-export function cameraEyePosition(cam: OrbitCamera): [number, number, number] {
-  const cosPitch = Math.cos(cam.pitch);
-  const sinPitch = Math.sin(cam.pitch);
-  const cosYaw = Math.cos(cam.yaw);
-  const sinYaw = Math.sin(cam.yaw);
-
-  const x = cam.target[0] + cam.distance * cosPitch * sinYaw;
-  const y = cam.target[1] + cam.distance * (-sinPitch);
-  const z = cam.target[2] + cam.distance * cosPitch * cosYaw;
-  return [x, y, z];
-}
+export { cameraEyePosition };
 
 // Build a Bloom Camera3D struct from the orbit state.
 export function buildCamera3D(cam: OrbitCamera): {

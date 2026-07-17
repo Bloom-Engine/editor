@@ -16,7 +16,7 @@ import {
   setWindowTitle,
 } from 'bloom';
 
-import { createEntity, Vec3Lit } from 'bloom/world';
+import { createEntity, saveWorld, Vec3Lit } from 'bloom/world';
 import { handleSelectClick } from './tools/select-tool';
 import { handlePlaceClick } from './tools/place-tool';
 
@@ -28,7 +28,7 @@ import { DuplicateEntityCommand } from './state/commands/duplicate-entity';
 import { RemoveWaterCommand, RemoveRiverCommand } from './state/commands/edit-water';
 
 import { loadProject } from './io/project';
-import { loadAssetCatalog } from './io/asset-catalog';
+import { loadAssetCatalog, pumpAssetCatalog } from './io/asset-catalog';
 import { openWorld, saveCurrentWorld, defaultSavePath } from './io/world-io';
 
 import { updateOrbitCamera, buildCamera3D } from './viewport/orbit-camera';
@@ -42,6 +42,7 @@ import { createUiContext, uiBeginFrame, uiEndFrame } from './ui/ui-context';
 import { createMoveGizmoState, updateMoveGizmo, drawMoveGizmo } from './gizmos/move-gizmo';
 import { createRotateGizmoState, updateRotateGizmo, drawRotateGizmo } from './gizmos/rotate-gizmo';
 import { createScaleGizmoState, updateScaleGizmo, drawScaleGizmo } from './gizmos/scale-gizmo';
+import { createPointGizmoState, updatePointGizmo, drawPointGizmo } from './gizmos/point-gizmo';
 import { updateBrushTool } from './tools/brush-tool';
 import { updateWaterTool, drawWaterVolumes } from './tools/water-tool';
 import { updateRiverTool, drawRiverSplines } from './tools/river-tool';
@@ -59,16 +60,32 @@ import { drawToolbar } from './ui/layouts/toolbar';
 import { drawAssetPanel } from './ui/layouts/asset-panel';
 import { drawInspector } from './ui/layouts/inspector';
 import { drawOutliner } from './ui/layouts/outliner';
+import { drawRecentPanel } from './ui/layouts/recent-panel';
 import { drawStatusBar } from './ui/layouts/status-bar';
+import { pumpThumbnails } from './ui/thumbnails';
 import { runSelfTests } from './tests/self-tests';
 
 // ---- self-tests (headless) ---------------------------------------------------
 
 // `bloom-editor --test` runs the suite without opening a window and exits
 // nonzero on any failure, so CI and pre-commit hooks can gate on it.
+//
+// `--project <path>` opens a specific editor.project.json (instead of walking
+// up from CWD), and `--world <path>` opens a specific world file — with or
+// without a project. Together they let the editor open ANY game's data from
+// anywhere, no dialogs: `main --project ../game/editor.project.json` or
+// `main --world some/level.world.json`.
 let selfTestMode = false;
+let argProjectPath: string | null = null;
+let argWorldPath: string | null = null;
 for (let i = 0; i < process.argv.length; i++) {
   if (process.argv[i] === '--test') selfTestMode = true;
+  if (process.argv[i] === '--project' && i + 1 < process.argv.length) {
+    argProjectPath = process.argv[i + 1];
+  }
+  if (process.argv[i] === '--world' && i + 1 < process.argv.length) {
+    argWorldPath = process.argv[i + 1];
+  }
 }
 if (selfTestMode) {
   const failures = runSelfTests();
@@ -89,15 +106,29 @@ const ui = createUiContext();
 const moveGizmo = createMoveGizmoState();
 const rotateGizmo = createRotateGizmoState();
 const scaleGizmo = createScaleGizmoState();
+const pointGizmo = createPointGizmoState();
 
-// Load project + assets.
-loadProject(state);
-// Blocking: loads every GLB in the project's models dir (~20 s for the
-// shooter's 26 on a mid Windows box). Worth making async — see PLAN.md.
+// Load project + assets. The catalog only LISTS models here (instant);
+// pumpAssetCatalog in the frame loop streams the GLBs in one per frame, so
+// the old ~20 s black window at startup is gone — the world appears at once
+// as placeholder boxes and meshes pop in as they load.
+loadProject(state, argProjectPath);
 loadAssetCatalog(state);
 
-// Open default world if available.
-if (state.project && state.project.defaultWorld.length > 0) {
+if (state.project !== null) {
+  setWindowTitle('Bloom World Editor — ' + state.project.name +
+    (state.project.gameId.length > 0 ? ' (' + state.project.gameId + ')' : ''));
+}
+
+// Open a world: --world wins, then the project's default.
+if (argWorldPath !== null) {
+  if (openWorld(state, argWorldPath)) {
+    if (state.project) addRecentProject(state.project.name, state.project.filePath);
+    frameCameraOnWorld(state);
+  } else {
+    console.error('could not open --world ' + argWorldPath);
+  }
+} else if (state.project && state.project.defaultWorld.length > 0) {
   const worldPath = state.project.worldsDir + '/' + state.project.defaultWorld;
   openWorld(state, worldPath);
   addRecentProject(state.project.name, state.project.filePath);
@@ -112,6 +143,10 @@ state.pendingEnvironmentSync = true;
 // Auto-save timer (every 2 minutes).
 const AUTOSAVE_INTERVAL = 120; // seconds
 let autosaveTimer = 0;
+
+// Models still streaming in (previous frame's count). Thumbnails wait for
+// zero so the two per-frame pumps never fight over frame time.
+let modelsPending = 1;
 
 // ---- main loop -------------------------------------------------------------
 
@@ -239,6 +274,13 @@ while (!windowShouldClose()) {
     a: 255,
   });
 
+  // Render missing asset thumbnails, one per frame, once models are in.
+  // Must run inside the frame but before the main 3D pass (it switches the
+  // render target and back).
+  if (modelsPending === 0 && !state.playtesting) {
+    pumpThumbnails(state, 1);
+  }
+
   // ---- 3D viewport ---------------------------------------------------------
 
   const cam3D = buildCamera3D(state.camera);
@@ -247,13 +289,16 @@ while (!windowShouldClose()) {
   drawGroundGrid();
   drawWorldAxes();
 
-  // Update and draw gizmos based on transform mode.
+  // Update and draw gizmos based on transform mode. The point gizmo covers
+  // water / river / light selections, which the entity gizmos bail on.
   updateMoveGizmo(state, moveGizmo);
   updateRotateGizmo(state, rotateGizmo);
   updateScaleGizmo(state, scaleGizmo);
+  updatePointGizmo(state, pointGizmo);
   drawMoveGizmo(moveGizmo);
   drawRotateGizmo(rotateGizmo);
   drawScaleGizmo(scaleGizmo);
+  drawPointGizmo(state, pointGizmo);
 
   // In-progress previews for the water/river tools, plus light markers (a light
   // has no mesh, so without these you cannot see or click one).
@@ -300,6 +345,7 @@ while (!windowShouldClose()) {
     if (state.activeTool === 'select' && state.selection.primary === null && !state.editingPrefab) {
       drawEnvironmentPanel(ui, state);
     }
+    drawRecentPanel(ui, state);
   }
   drawPlaytestOverlay(state);
 
@@ -307,7 +353,7 @@ while (!windowShouldClose()) {
 
   // ---- process viewport click (only if UI didn't capture the mouse) ---------
 
-  if (viewportClicked && !ui.mouseCaptured && !moveGizmo.dragging && !rotateGizmo.dragging && !scaleGizmo.dragging) {
+  if (viewportClicked && !ui.mouseCaptured && !moveGizmo.dragging && !rotateGizmo.dragging && !scaleGizmo.dragging && !pointGizmo.dragging && !pointGizmo.consumedClick) {
     if (state.activeTool === 'place') {
       handlePlaceClick(state);
     } else if (state.activeTool === 'select' || state.activeTool === 'transform') {
@@ -322,6 +368,15 @@ while (!windowShouldClose()) {
   updateRiverTool(state);
   updateLightTool(state);
 
+  // ---- stream in pending models (one GLB per frame) --------------------------
+
+  const pendingModels = pumpAssetCatalog(state, 1);
+  modelsPending = pendingModels;
+  if (pendingModels > 0) {
+    state.statusMessage = 'Loading models… ' + pendingModels + ' remaining';
+    state.statusMessageT = 0.5;
+  }
+
   // ---- world sync (at the end of the frame) --------------------------------
 
   syncWorldToScene(state);
@@ -329,6 +384,19 @@ while (!windowShouldClose()) {
   // ---- finish --------------------------------------------------------------
 
   endDrawing();
+}
+
+// The window is closing. Losing edits silently is unacceptable — but so is
+// silently overwriting the real file with changes the user may have been
+// abandoning on purpose. Park them in a sibling recovery file instead;
+// openWorld announces it on the next launch. (Skipped in prefab mode: the
+// stashed WORLD is what matters there and it hasn't been touched.)
+if (state.modified && state.worldPath !== null && !state.editingPrefab) {
+  const recoverPath = state.worldPath + '.recover';
+  const res = saveWorld(recoverPath, state.world);
+  if (res.ok) {
+    console.error('editor: window closed with unsaved changes — parked in ' + recoverPath);
+  }
 }
 
 closeWindow();

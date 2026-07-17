@@ -47,3 +47,22 @@ export function joinPath(a: string, b: string): string {
   if (a.charAt(a.length - 1) === '/') return a + b;
   return a + '/' + b;
 }
+
+// The inverse of joinPath(rootDir, ...): strip the project root prefix so the
+// result is PROJECT-RELATIVE — the exact string world files store in modelRef
+// and the exact string the catalog must be keyed by.
+//
+// This is the same identity rule joinPath's comment describes, from the other
+// side: with `--project ../shooter/editor.project.json` the resolved load path
+// is '../shooter/assets/models/x.glb', but the world says
+// 'assets/models/x.glb'. Keying the catalog by the LOAD path made every lookup
+// miss and rendered the whole arena as placeholder boxes again — the disease
+// joinPath was cured of, reintroduced one level up.
+export function projectRelative(rootDir: string, path: string): string {
+  if (rootDir.length === 0 || rootDir === '.' || rootDir === './') return path;
+  const prefix = rootDir.charAt(rootDir.length - 1) === '/' ? rootDir : rootDir + '/';
+  if (path.length > prefix.length && path.substring(0, prefix.length) === prefix) {
+    return path.substring(prefix.length);
+  }
+  return path;
+}

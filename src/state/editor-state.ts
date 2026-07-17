@@ -18,6 +18,7 @@ export interface Project {
   filePath: string;          // Absolute path of editor.project.json.
   rootDir: string;           // Directory containing the project file.
   name: string;
+  gameId: string;            // Stable slug; shown in the window title.
   modelsDir: string;         // Resolved absolute.
   prefabsDir: string;
   worldsDir: string;
@@ -25,16 +26,29 @@ export interface Project {
   defaultWorld: string;
   /// Optional: the game binary to launch for play-in-editor. Empty = no Play button.
   playCommand: string;
+  // Optional per-game placeholder colors from the project file's `kindColors`
+  // ("kind": "r,g,b" 0-255). Parallel arrays, NOT a Map: Perry 0.5.x
+  // miscompiles Map fields on interfaces (docs/perry-map-size-av.md).
+  kindColorKeys: string[];
+  kindColorValues: Vec3Lit[];
 }
 
 export interface ModelEntry {
-  relPath: string;           // Relative to project root, e.g. "assets/models/tree_oak.glb".
+  // PROJECT-relative path, e.g. "assets/models/tree_oak.glb" — the catalog
+  // key, and byte-for-byte the string world files store in modelRef. NOT
+  // necessarily a path the editor can open (see filePath).
+  relPath: string;
+  // The path to actually read the file from, resolved against the project
+  // root (differs from relPath when the editor runs outside the game repo,
+  // e.g. --project ../shooter/editor.project.json).
+  filePath: string;
   displayName: string;       // Filename without extension.
   category: string;          // Derived from prefix: "tree_", "flower_", etc.
-  modelHandle: number;       // Bloom Model.handle after loading.
+  modelHandle: number;       // Bloom Model.handle after loading; 0 until then.
   boundsMin: Vec3Lit;
   boundsMax: Vec3Lit;
-  loaded: boolean;
+  loaded: boolean;           // Set by pumpAssetCatalog when the GLB arrives.
+  failed: boolean;           // Unreadable GLB — never retried, stays placeholder.
 }
 
 // NB: AssetCatalog and HandleMap are CLASSES, not interfaces, and that is
@@ -354,4 +368,20 @@ export function nextEntityId(state: EditorState): string {
 export function setStatus(state: EditorState, msg: string): void {
   state.statusMessage = msg;
   state.statusMessageT = 4.0;
+}
+
+// World-space eye position from the orbit parameters. Lives here (not in
+// orbit-camera.ts) so both ray.ts and orbit-camera.ts can use it without an
+// import cycle: orbit-camera needs ray math for zoom-to-cursor, and ray needs
+// the eye position — editor-state imports neither.
+export function cameraEyePosition(cam: OrbitCamera): [number, number, number] {
+  const cosPitch = Math.cos(cam.pitch);
+  const sinPitch = Math.sin(cam.pitch);
+  const cosYaw = Math.cos(cam.yaw);
+  const sinYaw = Math.sin(cam.yaw);
+
+  const x = cam.target[0] + cam.distance * cosPitch * sinYaw;
+  const y = cam.target[1] + cam.distance * (-sinPitch);
+  const z = cam.target[2] + cam.distance * cosPitch * cosYaw;
+  return [x, y, z];
 }

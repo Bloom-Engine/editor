@@ -29,6 +29,8 @@ export function beginPanel(
   ui.panelW = w;
   ui.panelH = h;
   ui.cursorX = x + Theme.padding;
+  ui.clipTop = y;
+  ui.clipBottom = y + h;
 
   if (title) {
     ui.cursorY = y + Theme.padding;
@@ -48,23 +50,93 @@ export function endPanel(_ui: UiContext): void {
   // Placeholder for future scrollbar / clip-region cleanup.
 }
 
+// True when a widget spanning [y, y+h] pokes outside the current clip window.
+// Skipped widgets still advance the layout cursor, so scrolled-out rows keep
+// their place; they just neither draw nor hit-test.
+function clipped(ui: UiContext, y: number, h: number): boolean {
+  return y < ui.clipTop || y + h > ui.clipBottom;
+}
+
+// ---- Scroll region -----------------------------------------------------------
+//
+// A vertically scrollable strip INSIDE the current panel (never nested). Rows
+// drawn between begin/end are offset by the stored scroll and clipped to the
+// region; the mouse wheel scrolls while the pointer is over it. endScrollRegion
+// measures the content, clamps the offset, and draws a thin scrollbar when the
+// content overflows. Offsets persist in ui.scrollOffsets keyed by `id`.
+
+export function beginScrollRegion(ui: UiContext, id: string, top: number, height: number): void {
+  const stored = ui.scrollOffsets.get(id);
+  const scroll = stored !== undefined ? stored : 0;
+
+  ui.scrollRegionTop = top;
+  ui.scrollRegionH = height;
+  ui.clipTop = top;
+  ui.clipBottom = top + height;
+  ui.cursorY = top - scroll;
+
+  if (ui.mouseWheel !== 0 &&
+      pointInRect(ui.mouseX, ui.mouseY, ui.panelX, top, ui.panelW, height)) {
+    // Wheel-up (positive) scrolls toward the top. Clamped in endScrollRegion,
+    // once the content height is known.
+    ui.scrollOffsets.set(id, scroll - ui.mouseWheel * Theme.rowHeight * 3);
+    ui.mouseCaptured = true;
+  }
+}
+
+export function endScrollRegion(ui: UiContext, id: string): void {
+  const stored = ui.scrollOffsets.get(id);
+  const scroll = stored !== undefined ? stored : 0;
+  const contentH = (ui.cursorY + scroll) - ui.scrollRegionTop;
+
+  let maxScroll = contentH - ui.scrollRegionH;
+  if (maxScroll < 0) maxScroll = 0;
+  let clampedScroll = scroll;
+  if (clampedScroll < 0) clampedScroll = 0;
+  if (clampedScroll > maxScroll) clampedScroll = maxScroll;
+  if (clampedScroll !== scroll) ui.scrollOffsets.set(id, clampedScroll);
+
+  if (contentH > ui.scrollRegionH && maxScroll > 0) {
+    const trackX = ui.panelX + ui.panelW - 4;
+    let thumbH = ui.scrollRegionH * (ui.scrollRegionH / contentH);
+    if (thumbH < 20) thumbH = 20;
+    const thumbY = ui.scrollRegionTop +
+      (ui.scrollRegionH - thumbH) * (clampedScroll / maxScroll);
+    drawRect(trackX, ui.scrollRegionTop, 3, ui.scrollRegionH, Theme.border);
+    drawRect(trackX, thumbY, 3, thumbH, Theme.textDim);
+  }
+
+  // Restore the panel-wide clip and park the cursor below the region.
+  ui.clipTop = ui.panelY;
+  ui.clipBottom = ui.panelY + ui.panelH;
+  ui.cursorY = ui.scrollRegionTop + ui.scrollRegionH;
+}
+
 // ---- Label -----------------------------------------------------------------
 
 export function label(ui: UiContext, text: string, color?: UiColor): void {
   const c = color ? color : Theme.text;
-  drawText(text, ui.cursorX, ui.cursorY, Theme.fontSize, c);
+  if (!clipped(ui, ui.cursorY, Theme.fontSize)) {
+    drawText(text, ui.cursorX, ui.cursorY, Theme.fontSize, c);
+  }
   ui.cursorY += Theme.fontSize + Theme.spacing;
 }
 
 export function labelSmall(ui: UiContext, text: string, color?: UiColor): void {
   const c = color ? color : Theme.textDim;
-  drawText(text, ui.cursorX, ui.cursorY, Theme.fontSizeSmall, c);
+  if (!clipped(ui, ui.cursorY, Theme.fontSizeSmall)) {
+    drawText(text, ui.cursorX, ui.cursorY, Theme.fontSizeSmall, c);
+  }
   ui.cursorY += Theme.fontSizeSmall + Theme.spacing;
 }
 
 // ---- Separator -------------------------------------------------------------
 
 export function separator(ui: UiContext): void {
+  if (clipped(ui, ui.cursorY, Theme.spacing * 3)) {
+    ui.cursorY += Theme.spacing * 3;
+    return;
+  }
   const y = ui.cursorY + Theme.spacing;
   // drawLine takes (x1, y1, x2, y2, thickness, Color) — pass the Color object,
   // not its four channels. Splatting the channels made the engine read `.r`
@@ -86,6 +158,11 @@ export function button(
   const bh = Theme.buttonHeight;
   const bx = ui.cursorX;
   const by = ui.cursorY;
+
+  if (clipped(ui, by, bh)) {
+    ui.cursorY += bh + Theme.spacing;
+    return false;
+  }
 
   const hovered = pointInRect(ui.mouseX, ui.mouseY, bx, by, bw, bh);
   if (hovered) ui.hotId = id;
@@ -118,6 +195,11 @@ export function toggleButton(
   const bh = Theme.buttonHeight;
   const bx = ui.cursorX;
   const by = ui.cursorY;
+
+  if (clipped(ui, by, bh)) {
+    ui.cursorY += bh + Theme.spacing;
+    return false;
+  }
 
   const hovered = pointInRect(ui.mouseX, ui.mouseY, bx, by, bw, bh);
   if (hovered) ui.hotId = id;
@@ -180,8 +262,9 @@ export function listRow(
   const rw = ui.panelW;
   const ry = ui.cursorY;
 
-  if (ry + rh < ui.panelY || ry > ui.panelY + ui.panelH) {
-    // Off-screen — skip drawing but still advance cursor.
+  if (clipped(ui, ry, rh)) {
+    // Outside the clip window (scrolled out) — skip drawing but still advance
+    // the cursor so the scroll region measures true content height.
     ui.cursorY += rh;
     return false;
   }

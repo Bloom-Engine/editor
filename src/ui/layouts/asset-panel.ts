@@ -1,15 +1,19 @@
 // Right-side asset panel: scrollable list of models and prefabs with category
 // filters. Clicking a model sets it as the active placement asset.
 
-import { getScreenWidth, getScreenHeight } from 'bloom';
-import { UiContext } from '../ui-context';
-import { beginPanel, endPanel, label, labelSmall, listRow, separator, toolButton, button } from '../widgets';
+import { getScreenWidth, getScreenHeight, drawRect, drawRectLines, drawText, drawTexturePro } from 'bloom';
+import { UiContext, pointInRect } from '../ui-context';
+import {
+  beginPanel, endPanel, label, labelSmall, listRow, separator, toolButton, button,
+  beginScrollRegion, endScrollRegion,
+} from '../widgets';
 import { textInput, Ref } from '../text-input';
 import { Theme } from '../theme';
 import { EditorState } from '../../state/editor-state';
 import {
   enterNewPrefabMode, enterPrefabEditMode, exitPrefabMode, savePrefabToDisk,
 } from '../../tools/prefab-tool';
+import { getThumbnail, THUMB_SIZE } from '../thumbnails';
 
 // The name field for "New Prefab". Module-scope because it must survive between
 // frames — an immediate-mode text field with a per-frame Ref forgets what you typed.
@@ -81,8 +85,26 @@ function drawModelList(
 
   separator(ui);
 
-  // Model list.
+  // Model grid: 64px thumbnails (PLAN §G) with the name below each; entries
+  // whose thumbnail hasn't rendered yet (or whose model is still streaming
+  // in) show a flat placeholder cell. Scrolls like the outliner.
+  const cell = 64;
+  const cellLabelH = 13;
+  const cellH = cell + cellLabelH + 6;
+  const cellGap = 6;
+  const innerX = panelX + Theme.padding;
+  const innerW = panelW - Theme.padding * 2;
+  let cols = Math.floor((innerW + cellGap) / (cell + cellGap));
+  if (cols < 1) cols = 1;
+
+  const listTop = ui.cursorY;
+  const screenH = getScreenHeight();
+  const listH = screenH - Theme.statusBarHeight - Theme.padding - listTop;
+  beginScrollRegion(ui, 'asset_models', listTop, listH);
+
   const order = state.catalog.modelOrder;
+  let col = 0;
+  let rowY = ui.cursorY;
   for (let i = 0; i < order.length; i++) {
     const relPath = order[i];
     const entry = state.catalog.models.get(relPath);
@@ -91,12 +113,65 @@ function drawModelList(
       continue;
     }
 
-    const selected = state.placeAssetRef === relPath;
-    if (listRow(ui, 'model_' + i, entry.displayName, selected, 0)) {
-      state.placeAssetRef = relPath;
-      state.activeTool = 'place';
+    const x = innerX + col * (cell + cellGap);
+    const visible = rowY >= ui.clipTop && rowY + cellH <= ui.clipBottom;
+
+    if (visible) {
+      const hovered = pointInRect(ui.mouseX, ui.mouseY, x, rowY, cell, cellH);
+      if (hovered) {
+        ui.hotId = 'model_' + i;
+        ui.mouseCaptured = true;
+        if (ui.mousePressedLeft) {
+          state.placeAssetRef = relPath;
+          state.activeTool = 'place';
+        }
+      }
+
+      const thumb = entry.loaded ? getThumbnail(relPath) : null;
+      if (thumb !== null && thumb.textureHandle !== 0) {
+        drawTexturePro(
+          { handle: thumb.textureHandle, width: THUMB_SIZE, height: THUMB_SIZE },
+          { x: 0, y: 0, width: THUMB_SIZE, height: THUMB_SIZE },
+          { x: x, y: rowY, width: cell, height: cell },
+          { x: 0, y: 0 }, 0,
+          { r: 255, g: 255, b: 255, a: 255 },
+        );
+      } else {
+        // No rendered thumbnail (see thumbnails.ts) — draw a clearly visible
+        // category-colored cell with the model's initial, dimmed while the
+        // GLB is still streaming in.
+        const cc = categoryColor(entry.category);
+        const dim = entry.loaded ? 1.0 : 0.45;
+        drawRect(x, rowY, cell, cell, {
+          r: Math.floor(cc[0] * dim), g: Math.floor(cc[1] * dim),
+          b: Math.floor(cc[2] * dim), a: 255,
+        });
+        const initial = entry.displayName.length > 0
+          ? entry.displayName.substring(0, 1).toUpperCase() : '?';
+        drawText(initial, x + cell / 2 - 5, rowY + cell / 2 - 10, 20,
+          { r: 255, g: 255, b: 255, a: 230 });
+      }
+
+      const selected = state.placeAssetRef === relPath;
+      if (selected || hovered) {
+        drawRectLines(x, rowY, cell, cell, 1, selected ? Theme.textAccent : Theme.border);
+      }
+
+      let name = entry.displayName;
+      if (name.length > 10) name = name.substring(0, 9) + '…';
+      drawText(name, x, rowY + cell + 2, Theme.fontSizeSmall, Theme.textDim);
+    }
+
+    col++;
+    if (col >= cols) {
+      col = 0;
+      rowY += cellH;
     }
   }
+  // Account for a partially filled final row.
+  ui.cursorY = col === 0 ? rowY : rowY + cellH;
+
+  endScrollRegion(ui, 'asset_models');
 }
 
 function drawPrefabList(
@@ -162,6 +237,26 @@ function drawPrefabList(
     const label2 = 'Edit "' + (p ? p.name : selectedId) + '"';
     if (button(ui, 'edit_prefab', label2)) enterPrefabEditMode(state, selectedId);
   }
+}
+
+// Stable per-category cell color (same hash-to-hue trick as the viewport's
+// placeholder boxes): two categories never silently share a color, and a
+// category keeps its color across sessions.
+function categoryColor(category: string): [number, number, number] {
+  let h = 0;
+  for (let i = 0; i < category.length; i++) h = ((h * 31) + category.charCodeAt(i)) | 0;
+  const hue = (((h % 360) + 360) % 360) / 60;
+  const c = 0.55 * 0.5;
+  const x = c * (1 - Math.abs((hue % 2) - 1));
+  const m = 0.55 - c;
+  let r = 0, g = 0, b = 0;
+  if (hue < 1) { r = c; g = x; }
+  else if (hue < 2) { r = x; g = c; }
+  else if (hue < 3) { g = c; b = x; }
+  else if (hue < 4) { g = x; b = c; }
+  else if (hue < 5) { r = x; b = c; }
+  else { r = c; b = x; }
+  return [Math.floor((r + m) * 255), Math.floor((g + m) * 255), Math.floor((b + m) * 255)];
 }
 
 /// Lowercase, non-alphanumerics to underscores — this becomes a filename and a

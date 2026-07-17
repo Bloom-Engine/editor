@@ -3,16 +3,26 @@
 **Date:** 2026-07-11 · **Toolchain:** Perry 0.5.1239 · **Status (updated 2026-07-15):** MOSTLY DONE — the ✅ markers through the body are
 accurate; this header was not. A/B/C/D/E/F1 and play-in-editor have shipped (and are
 now pushed — they sat committed on one machine's local `main` until 2026-07-15).
-Still outstanding: **F2** (rename/tint/tags/modelRef editing), **F3** (outliner
-depth), **G** (asset thumbnails — `renderAllThumbnails`/`getThumbnail` still have
-zero call sites), **H** (recent-projects UI — the write path runs every launch and
-nothing reads it), **I** (environment panel — still mutates directly, no
-`SetEnvironmentCommand`), and **K2** (see the correction there — its premise is
-void). ~~**K1**~~ shipped 2026-07-15 (evening) — see the correction at §K1.
+**Status update 2026-07-16:** the outstanding list is now EMPTY apart from
+slivers. Shipped 2026-07-16 on `feat/editor-completion`: **F2** (rename / tint /
+tags / modelRef-with-Apply, all undoable), **F3** (outliner scrolls + filter
+box; rename lives in the inspector, per-row ops remain the selection + Delete /
+Ctrl+D paths), **I** (full env schema incl. sunColor/ambientColor/fogColor,
+per-field-coalescing `SetEnvironmentCommand`), **§C tail** (point gizmo: water
+move/scale, per-control-point river handles, light move), **H** (Recent button
+→ panel → whole-project switch), **G** (model thumbnails via render-to-texture,
+one per frame; *prefab-tab thumbnails are the remaining sliver*), **P5** (the
+catalog streams — one GLB per frame, placeholders pop into meshes; the ~20 s
+black window is gone), plus `--project`/`--world` CLI args and the
+dxcompiler.dll discovery (see README — the editor previously could not START
+outside a directory carrying the DX12 compiler DLLs). **K2** stays void/optional
+(a `postSaveCommand` key remains unimplemented by choice); **J** stays stretch.
+~~**K1**~~ shipped 2026-07-15 (evening) — see the correction at §K1.
 
 **Part 4 (added 2026-07-15) extends scope:** the editor should edit **any world
-for any game** that uses the world format. It carries its own audit and phased
-plan; Phase 1 (file trust) is already landed.
+for any game** that uses the world format. Phase 1 (file trust) landed
+2026-07-15; **P2 (contract) and P3a (world-viewer) landed 2026-07-16** — see
+the Part 4 status notes. P3b (garden port) is the one open decision.
 
 This document is self-contained: it is written for an implementer with no prior context. It replaces the original design plan (which was deleted). Part 1 is a verified audit of the current state, Part 2 defines "done", Part 3 is the work plan. This is a **single unified scope** — do not cut it down to an MVP; if a task has a prerequisite, the prerequisite is in scope too.
 
@@ -401,25 +411,124 @@ Every task lands with its self-test where the logic is testable headless (comman
 
 #### P2. The contract — write down what "uses the world format" means
 
-- **P2a** `engine/docs/world-format.md`: the schema (or a blessed pointer to `types.ts`), the three sanctioned extension points and the strip-warning behavior, `editor.project.json` — all eight keys, defaults, "all optional" — the `--world <path>` play convention, and the recommended `userData.kind` pattern with `halfExtents` et al. documented as conventions. Acceptance: a third game could adopt the format from this doc alone, without reading shooter source.
-- **P2b** De-shooterize the soft spots: optional project key (e.g. `kindColors`) feeding the placeholder map, hash fallback stays the default; either use `gameId` or stop parsing it.
-- **P2c** Editor CLI: `--project <path>` and `--world <path>` args (argv handling already exists for `--test`), so any world can be opened without dialogs. Acceptance: `./main --world ../somegame/assets/worlds/x.world.json` opens it.
+✅ **DONE (2026-07-16):**
 
-#### P3. The proof — a second consumer
+> - **P2a** `engine/docs/world-format.md` shipped: schema summary with
+>   `types.ts` as source of truth, the three round-tripping extension points
+>   and the strip-warning behavior, the full `editor.project.json` key table
+>   (now nine keys — `kindColors` added), the `--world` play contract, both
+>   runtime consumption shapes, and the versioning promises.
+> - **P2b** `kindColors` project key feeds the placeholder map (hash fallback
+>   stays); `gameId` is read and shown in the window title instead of being
+>   parsed-and-dropped.
+> - **P2c** `--project <path>` / `--world <path>` CLI args work — including a
+>   bare world with no project. Discovered en route: the editor could not
+>   START from any directory not carrying `dxcompiler.dll`/`dxil.dll` (Dx12
+>   backend unavailable → Vulkan surface panic at window creation). The DLLs
+>   now sit beside the exe (gitignored; README documents the one-time copy).
 
-- **P3a** Engine `world-viewer` example (~100 LOC): `loadWorld` + `instantiateWorld` + `applyWorldLights` + fly camera on any path handed to it. First consumer of `instantiateWorld`; becomes the conformance harness for the generic path (terrain, splat layers, water, rivers, lights outside the editor) and the "hello world" for adopters. ⚠ verify-first: `instantiateWorld` has never run in a game — expect the §C1-era acceptance that was "never executable" to surface real gaps here.
+#### P3. The proof — a second consumer (P3a ✅, P3b open)
+
+- **P3a** ✅ **DONE (2026-07-16).** `engine/examples/world-viewer/` runs arena_02: `loadWorld` → `instantiateWorld` → `applyWorldEnvironment` per frame, fly camera, instantiation warnings surfaced. `instantiateWorld` has its first consumer. The predicted gap was REAL: nothing on the generic path re-applied the environment per frame (the renderer clears lighting in begin_frame, so `instantiateWorld` alone lights exactly one frame). Fix: new shared `applyWorldEnvironment` in `engine/src/world/render.ts`, used by the viewer AND by the editor's `syncEnvironment` — the lighting preview is now literally the same code path everywhere. Also found en route: `getRenderTextureTexture` still returned the pre-0.5 `{ id }` Texture shape (fixed; it had zero draw-call consumers until thumbnails).
 - **P3b** Port **garden** to the world format. Its scene maps directly (island → terrain or flat entities, water plane → water volume, 12 collectibles → entities with `userData.kind: "bloom"`), and it exercises the exact path shooter doesn't: a world **authored from scratch in the editor**, loaded via **`instantiateWorld`**. Acceptance: a garden level built in the editor plays in garden. Decision needed first: adoption as product direction vs. testbed branch — garden has a GDD; don't fight its design (§4.4 Q1).
 
-#### P4. Generic editing depth (Part 3's F/H/I items, re-prioritized for foreign worlds)
+#### P4. Generic editing depth — ✅ DONE (2026-07-16)
 
-Order changes because the customer is now "someone else's world": **F3 first and split** — scrolling + a filter box are prerequisites for opening any large world (66 entities already buries the list; the panel cannot scroll at all — `outliner.ts:35,73`), rename/per-row ops can follow. Then **F2** with modelRef reassignment leading (remapping asset paths is the first thing editing a foreign world needs), then **I** (env completeness + `SetEnvironmentCommand`), then water/river gizmo manipulation (§C tail), then **H** (recent projects — the multi-game switching workflow). **J** stays stretch.
+> All landed on `feat/editor-completion`: outliner scroll region + filter box
+> (F3; rename lives in the inspector; per-row delete/duplicate stayed as the
+> selection + Delete / Ctrl+D paths — a visible convention beats per-row
+> button clutter in a 24px row); inspector rename / tint / tags / modelRef
+> draft-and-Apply (F2, all undoable, add/remove tint discrete while drags
+> coalesce); full-schema environment panel through a per-field-coalescing
+> `SetEnvironmentCommand` (I); point gizmo for water center/size, river
+> control points (click a handle, drag axes), and light position (§C tail);
+> recent-projects panel with whole-project switching (H). **J** stays stretch.
 
-#### P5. Polish
+#### P5. Polish — ✅ DONE except prefab thumbnails (2026-07-16)
 
-Async/lazy asset catalog (the 20 s blocking startup punishes exactly the big new game this is for; models on demand, catalog listing stays instant), then **G** thumbnails as the natural background job once loading is async.
+> The catalog streams: `loadAssetCatalog` lists instantly, `pumpAssetCatalog`
+> loads one GLB per frame in the main loop, entities pop from placeholder box
+> to mesh as their model arrives. The ~20 s black window is gone. Model
+> thumbnails (G) render one per frame into 128px render textures after the
+> stream settles; the Models tab is a thumbnail grid. **Remaining sliver:**
+> the Prefabs tab still shows text rows — prefab thumbnails need leaf
+> expansion + a computed AABB (prefab `bounds` are typically degenerate).
+> ⚠ Thumbnail visual quality is machine-verified only as "doesn't crash" —
+> eyeball composition/orientation on first human run.
 
 ### 4.4 Open questions
 
 1. Garden adoption: product direction or testbed? (P3b blocks on this; P3a doesn't.)
 2. Should unknown-field warnings eventually harden into a versioned-strict mode (error, not warning, when `schemaVersion` claims current)? Today: warn only.
 3. Does `world-viewer` belong in `engine/examples/` (sibling to `perry-embed`) or as a `--view` mode of the editor binary? Leaning examples/ — the point is proving the path with zero editor code in the loop.
+
+---
+
+## Part 5 — Production readiness (added 2026-07-17)
+
+Parts 1–4 are feature-complete, and then two days of REAL USE found four
+"done"-but-broken things in a row: mouse hits off by the display scale (DPI),
+the editor unable to even start outside a directory carrying dxcompiler.dll,
+the whole arena invisible under `--project` (catalog key identity), and an
+0xc0000005 on the first placement click (Perry miscompiled the ray math into a
+load from absolute address 8 — layout-sensitive, invisible to every test that
+never clicked). The lesson is structural: **the features exist; what's missing
+for production is the machinery that catches this class of failure before a
+user does.** In rough priority:
+
+### 5.1 Interaction smoke test — ✅ DONE (2026-07-17)
+
+> `tools/ui-smoke.ps1`: launches the real binary against a scratch copy of
+> the arena_01 fixture, injects asset-cell click → 5 placements → camera
+> orbit → select → move-gizmo drag → Ctrl+S, then asserts alive, no FATAL on
+> stderr, saved file parses, entity count grew by exactly the placements,
+> and the safe-save siblings exist. First run: PASS (8 → 13 entities).
+> Would have caught both the key-identity bug and the ray miscompile.
+> Run it after every build and every Perry upgrade. Still to do: pin the
+> Perry version formally; file the kept repro pair upstream.
+
+### 5.2 Data safety — ✅ DONE (2026-07-17)
+
+> - **Crash-safe saves** (engine `feat/safe-saves`): `saveWorld`/`savePrefab`
+>   write `.tmp` → read back + byte-compare (catches the 0-byte-write class)
+>   → snapshot `.bak` → write real. True atomic replace still wants a rename
+>   FFI. Gitignore `*.world.json.tmp/.bak` in game repos.
+> - **Exit recovery instead of confirm-on-close**: closing with unsaved
+>   changes parks them in `<world>.recover` (never silently lost, never
+>   silently overwriting); opening that world later announces the recovery
+>   file in the status bar + console.
+
+### 5.3 Engine features the editor is blocked on
+
+- **Render-mesh-to-texture** (the obvious one): real thumbnails for models
+  and prefabs. The current render-target API is a per-frame override consumed
+  at end_frame — unusable mid-frame; needs either an immediate mode or a
+  dedicated `renderModelToTexture(model, camera, size)` call.
+- **Text-input completeness**: ~~caret movement~~ DONE 2026-07-17 (click
+  places the caret, Left/Right/Home/End move it, Delete deletes forward,
+  typing inserts at the caret). Still engine-blocked: clipboard paste,
+  selection ranges, hold-to-repeat (needs key-repeat events).
+- **unloadModel**: project switching currently leaks every GPU model.
+- (Nice-to-have) UI scissor/clip rects — current clipping skips whole
+  widgets; real clip rects would allow partially visible rows.
+
+### 5.4 Editing depth that daily use will demand
+
+Multi-select that acts as a group (selection.ids exists; gizmos/inspector act
+on primary only), copy/paste, a per-point river width UI, terrain resize,
+per-row outliner ops, world switcher listing `worldsDir` (Open dialog is the
+only path today), and a persistent log panel (status line is a 4-second
+transient — save errors deserve better). ~~Camera zoom~~ FIXED 2026-07-17:
+the wheel now dollies toward the point under the CURSOR (not the world
+center), honors multi-notch deltas, min distance 0.2, and no longer fires
+while the pointer is over a scrolling panel. Middle-drag pans, right-drag
+orbits — that was already there, just undocumented.
+
+### 5.5 Proof obligations that remain from Part 4
+
+The garden port (P3b, blocked on §4.4 Q1) is still the only thing that turns
+"any game CAN use this" into "a second game DOES." macOS is untested since the
+Windows bring-up — "production" means both platforms run the smoke test. And
+scale is unmeasured beyond ~250 entities: syncRebuilds does O(n) find() per
+rebuilt id and the outliner draws every row each frame; fine at hundreds,
+unknown at ten thousand.

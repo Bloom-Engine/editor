@@ -43,6 +43,16 @@ export interface UiContext {
   panelW: number;
   panelH: number;
 
+  // Vertical clip window widgets draw within. Set by beginPanel to the panel
+  // bounds and narrowed by beginScrollRegion; widgets that would cross it are
+  // skipped (cursor still advances, so scrolled-out content keeps its layout).
+  clipTop: number;
+  clipBottom: number;
+
+  // Active scroll region (one at a time; regions never nest).
+  scrollRegionTop: number;
+  scrollRegionH: number;
+
   // Drag state (for dragFloat).
   dragStartValue: number;
   dragStartX: number;
@@ -60,6 +70,8 @@ export function createUiContext(): UiContext {
     scrollOffsets: new Map<string, number>(),
     cursorX: 0, cursorY: 0,
     panelX: 0, panelY: 0, panelW: 0, panelH: 0,
+    clipTop: 0, clipBottom: 100000,
+    scrollRegionTop: 0, scrollRegionH: 0,
     dragStartValue: 0, dragStartX: 0,
   };
 }

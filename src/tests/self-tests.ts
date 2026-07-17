@@ -21,13 +21,18 @@ import { TransformEntityCommand } from '../state/commands/transform-entity';
 import { CreateTerrainCommand } from '../state/commands/create-terrain';
 import { SetUserDataCommand } from '../state/commands/set-userdata';
 import {
+  RenameEntityCommand, SetTintCommand, SetTagsCommand, SetModelRefCommand,
+} from '../state/commands/edit-entity';
+import { SetEnvironmentCommand } from '../state/commands/set-environment';
+import {
   AddTerrainLayerCommand, RemoveTerrainLayerCommand, TerrainPaintCommand, snapshotWeights,
 } from '../state/commands/terrain-paint';
 import { paintCell } from '../tools/brush-tool';
 import {
   enterNewPrefabMode, enterPrefabEditMode, exitPrefabMode, wouldCycle,
 } from '../tools/prefab-tool';
-import { joinPath } from '../io/paths';
+import { joinPath, projectRelative } from '../io/paths';
+import { mouseToWorldRay, rayPlaneIntersect } from '../viewport/ray';
 
 let passed = 0;
 let failed = 0;
@@ -59,7 +64,10 @@ export function runSelfTests(): number {
   testPrefabAuthoringMode();
   testPrefabAuthoringCycles();
   testPathJoinIdentity();
+  testMouseRay();
   testUserDataCommand();
+  testEntityEditCommands();
+  testEnvironmentCommand();
   testWaterCommands();
   testLightMigration();
   testSplatLayerCommands();
@@ -364,6 +372,81 @@ function testUserDataCommand(): void {
   assert(state.world.entities[0].userData['cooldown'] === '5', 'userdata: undo restores removed key');
 }
 
+// PLAN §F2: rename / tint / tags / modelRef, all undoable, rename and tint
+// coalescing like drags do.
+function testEntityEditCommands(): void {
+  const state = createEditorState();
+  runCommand(state, new CreateEntityCommand(createEntity('fe', 'a.glb', [0, 0, 0])));
+  const e = state.world.entities[0];
+  const baseDepth = state.undoStack.length;
+
+  // Rename coalesces per entity: typing is one undo entry, not one per key.
+  runCommand(state, new RenameEntityCommand('fe', 'a', 'ab'));
+  runCommand(state, new RenameEntityCommand('fe', 'ab', 'abc'));
+  assert(e.name === 'abc', 'edit: rename applied');
+  assert(state.undoStack.length === baseDepth + 1, 'edit: renames coalesced');
+  undo(state);
+  assert(e.name === 'a', 'edit: rename undo restores the pre-typing name');
+
+  // Tint: add, drag (coalesced), remove, undo chain.
+  runCommand(state, new SetTintCommand('fe', null, [1, 1, 1, 1]));
+  assert(e.tint !== null && e.tint[0] === 1, 'edit: tint added');
+  runCommand(state, new SetTintCommand('fe', [1, 1, 1, 1], [0.5, 1, 1, 1]));
+  runCommand(state, new SetTintCommand('fe', [0.5, 1, 1, 1], [0.2, 1, 1, 1]));
+  assert(e.tint !== null && Math.abs(e.tint[0] - 0.2) < 0.001, 'edit: tint drag applied');
+  undo(state);
+  assert(e.tint !== null && e.tint[0] === 1, 'edit: tint drag undoes as ONE entry to pre-drag');
+  runCommand(state, new SetTintCommand('fe', e.tint, null));
+  assert(e.tint === null, 'edit: tint removed');
+  undo(state);
+  assert(e.tint !== null, 'edit: tint removal undone');
+
+  // Tags are discrete: no coalescing, exact restore.
+  runCommand(state, new SetTagsCommand('fe', [], ['wall']));
+  runCommand(state, new SetTagsCommand('fe', ['wall'], ['wall', 'stone']));
+  assert(e.tags.length === 2, 'edit: tags added');
+  undo(state);
+  assert(e.tags.length === 1 && e.tags[0] === 'wall', 'edit: tag undo removes only the last');
+
+  // modelRef swap rebuilds the node (destroy+rebuild queued) and undoes.
+  runCommand(state, new SetModelRefCommand('fe', 'a.glb', 'b.glb'));
+  assert(e.modelRef === 'b.glb', 'edit: modelRef swapped');
+  assert(state.pendingRebuild.has('fe'), 'edit: modelRef swap queues a rebuild');
+  undo(state);
+  assert(e.modelRef === 'a.glb', 'edit: modelRef undo restores the original');
+}
+
+// PLAN §I: environment edits go through the undo stack; merging is scoped per
+// field so Ctrl+Z steps field by field, not "the whole tweaking session".
+function testEnvironmentCommand(): void {
+  const state = createEditorState();
+  const origSun = state.world.environment.sunIntensity;
+  const origFog = state.world.environment.fogStart;
+
+  // A drag on one field: many ticks, one undo entry.
+  const depth0 = state.undoStack.length;
+  const b1 = { ...state.world.environment };
+  state.world.environment.sunIntensity = 1.5;
+  runCommand(state, new SetEnvironmentCommand('sunIntensity', b1, state.world.environment));
+  const b2 = { ...state.world.environment };
+  state.world.environment.sunIntensity = 2.0;
+  runCommand(state, new SetEnvironmentCommand('sunIntensity', b2, state.world.environment));
+  assert(state.undoStack.length === depth0 + 1, 'env: same-field edits coalesce');
+  assert(state.pendingEnvironmentSync === true, 'env: sync flagged');
+
+  // A different field starts a new entry.
+  const b3 = { ...state.world.environment };
+  state.world.environment.fogStart = 99;
+  runCommand(state, new SetEnvironmentCommand('fogStart', b3, state.world.environment));
+  assert(state.undoStack.length === depth0 + 2, 'env: different field is a separate entry');
+
+  undo(state);
+  assert(state.world.environment.fogStart === origFog, 'env: fog undo');
+  assert(Math.abs(state.world.environment.sunIntensity - 2.0) < 0.001, 'env: sun survives fog undo');
+  undo(state);
+  assert(Math.abs(state.world.environment.sunIntensity - origSun) < 0.001, 'env: sun undo restores pre-drag');
+}
+
 function testWaterCommands(): void {
   const state = createEditorState();
   const volume: WaterVolume = {
@@ -594,6 +677,65 @@ function testPathJoinIdentity(): void {
   const catalogKey = joinPath(joinPath('.', 'assets/models'), 'prop_tree.glb');
   assert(catalogKey === 'assets/models/prop_tree.glb',
     'paths: catalog key MATCHES the world modelRef');
+
+  // The SAME disease one level up (found 2026-07-16, screenshot-verified):
+  // `--project ../shooter/editor.project.json` makes rootDir '../shooter', the
+  // load path '../shooter/assets/models/x.glb' — and the catalog key must
+  // still be the project-relative 'assets/models/x.glb' the world stores.
+  assert(projectRelative('../shooter', '../shooter/assets/models/prop_tree.glb')
+    === 'assets/models/prop_tree.glb',
+    'paths: --project catalog key strips the root back to the world modelRef');
+  assert(projectRelative('.', 'assets/models/prop_tree.glb') === 'assets/models/prop_tree.glb',
+    'paths: "." root is identity');
+  assert(projectRelative('proj/', 'proj/assets/x.glb') === 'assets/x.glb',
+    'paths: trailing-slash root strips cleanly');
+  assert(projectRelative('../shooter', 'assets/models/unrelated.glb')
+    === 'assets/models/unrelated.glb',
+    'paths: a path outside the root passes through untouched');
+}
+
+// --- Mouse-ray unprojection ----------------------------------------------------
+//
+// This exists to EXECUTE mouseToWorldRay headless, not just to check its math:
+// Perry 0.5.1208 miscompiled the previous body into a load from absolute
+// address 8 (see the header comment in viewport/ray.ts), so the editor died
+// with 0xc0000005 on the first placement click — and nothing in the suite ever
+// CALLED the function, so 152 tests stayed green over a binary that crashed on
+// click one. If the miscompile ever comes back, this test takes the whole
+// --test run down with the same AV, which is exactly the alarm we want.
+function testMouseRay(): void {
+  const state = createEditorState();
+  const cam = state.camera;
+
+  // A ray through the viewport center must go from the eye toward the target.
+  const ray = mouseToWorldRay(cam, 640, 400, 1280, 800, 240, 36, 800, 728);
+  const dLen = Math.sqrt(ray.direction[0] * ray.direction[0] +
+    ray.direction[1] * ray.direction[1] + ray.direction[2] * ray.direction[2]);
+  assert(Math.abs(dLen - 1) < 0.001, 'ray: direction is normalized (got ' + dLen + ')');
+  assert(ray.origin[0] === ray.origin[0] && ray.direction[0] === ray.direction[0],
+    'ray: no NaNs');
+
+  const toTargetX = cam.target[0] - ray.origin[0];
+  const toTargetY = cam.target[1] - ray.origin[1];
+  const toTargetZ = cam.target[2] - ray.origin[2];
+  const dot = ray.direction[0] * toTargetX + ray.direction[1] * toTargetY +
+    ray.direction[2] * toTargetZ;
+  assert(dot > 0, 'ray: center ray points toward the orbit target');
+
+  // Aim from above at the ground plane: the hit must land under the camera-ish,
+  // and off-center rays must land off-center in the matching direction.
+  const centerHit = rayPlaneIntersect(ray, [0, 0, 0], [0, 1, 0]);
+  assert(centerHit !== null, 'ray: center ray hits the ground plane');
+
+  const leftRay = mouseToWorldRay(cam, 340, 400, 1280, 800, 240, 36, 800, 728);
+  const leftHit = rayPlaneIntersect(leftRay, [0, 0, 0], [0, 1, 0]);
+  assert(leftHit !== null, 'ray: left-of-center ray hits the ground plane');
+  if (centerHit !== null && leftHit !== null) {
+    const dxc = leftHit[0] - centerHit[0];
+    const dzc = leftHit[2] - centerHit[2];
+    assert(Math.sqrt(dxc * dxc + dzc * dzc) > 0.01,
+      'ray: different pixels produce different ground hits');
+  }
 }
 
 // ---- Splat layers (PLAN §D) -------------------------------------------------

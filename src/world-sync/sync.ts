@@ -18,15 +18,13 @@ import {
   setSceneNodeColor, setSceneNodeVisible, setSceneNodeParent,
   updateSceneNodeGeometry,
   enableShadows, disableShadows,
-  setAmbientLight, setDirectionalLight,
-  genMeshCube, vec3,
+  genMeshCube,
   mat4Identity,
 } from 'bloom';
-import { setFog } from 'bloom/core';
 import { trsToMat4 } from 'bloom/world';
 import { buildHeightmapMesh } from 'bloom/world';
 import { expandPrefab, PrefabLeaf, createPrefabRegistry, registerPrefab, PrefabRegistry } from 'bloom/world';
-import { spawnWaterVolume, spawnRiver, applyWorldLights } from 'bloom/world';
+import { spawnWaterVolume, spawnRiver, applyWorldEnvironment } from 'bloom/world';
 import { EntityData, Vec3Lit, Mat4Lit } from 'bloom/world';
 import {
   EditorState, bindEntity, unbindEntity, handleOfEntity,
@@ -123,9 +121,19 @@ function hueToRgb(hue: number): Vec3Lit {
   return [Math.floor((r + m) * 255), Math.floor((g + m) * 255), Math.floor((b + m) * 255)];
 }
 
-function placeholderColor(entity: EntityData): Vec3Lit {
+function placeholderColor(state: EditorState, entity: EntityData): Vec3Lit {
   const kind = entity.userData['kind'];
   if (kind === undefined || kind === '') return [255, 0, 255];
+
+  // Project-supplied colors first (editor.project.json `kindColors`) — the
+  // game's own vocabulary beats the editor's built-in shooter-era table.
+  if (state.project !== null) {
+    const keys = state.project.kindColorKeys;
+    for (let i = 0; i < keys.length; i++) {
+      if (keys[i] === kind) return state.project.kindColorValues[i];
+    }
+  }
+
   if (kind === 'static_mesh') {
     const tag = entity.tags.length > 0 ? entity.tags[0] : '';
     const byTag = MESH_TAG_COLORS.get(tag);
@@ -280,7 +288,7 @@ function syncRebuilds(state: EditorState): void {
       if (entity.tint !== null) {
         applyTint(node, entity.tint);
       } else {
-        const c = placeholderColor(entity);
+        const c = placeholderColor(state, entity);
         setSceneNodeColor(node, c[0], c[1], c[2], 255);
       }
     }
@@ -341,53 +349,18 @@ function syncTerrain(state: EditorState): void {
 // ---- environment -----------------------------------------------------------
 
 function syncEnvironment(state: EditorState): void {
-  // The renderer's begin_frame resets the lighting block every frame
-  // (immediate-mode convention — the same reason the shooter re-sets
-  // sun/ambient per frame), so ambient, sun, and fog are re-applied
-  // unconditionally. setDirectionalLight replaces the sun in place;
-  // addDirectionalLight here would accumulate one extra light per call.
-  const env = state.world.environment;
-
-  setAmbientLight(
-    {
-      r: Math.floor(env.ambientColor[0] * 255),
-      g: Math.floor(env.ambientColor[1] * 255),
-      b: Math.floor(env.ambientColor[2] * 255),
-      a: 255,
-    },
-    env.ambientIntensity,
-  );
-
-  setDirectionalLight(
-    vec3(env.sunDirection[0], env.sunDirection[1], env.sunDirection[2]),
-    {
-      r: Math.floor(env.sunColor[0] * 255),
-      g: Math.floor(env.sunColor[1] * 255),
-      b: Math.floor(env.sunColor[2] * 255),
-      a: 255,
-    },
-    env.sunIntensity,
-  );
-
-  // The world's point lights, re-submitted for the same reason as the sun: the
-  // renderer clears its lighting block every frame. This is what lets the editor
-  // preview a world's lighting rather than guessing at it.
-  applyWorldLights(state.world);
-
-  // The engine's fog is exponential height fog while the schema stores a
-  // linear start/end pair — approximate with a density that reaches ~95%
-  // extinction at fogEnd, near-uniform over height.
-  if (env.fogEnd > 0.0001) {
-    setFog(env.fogColor[0], env.fogColor[1], env.fogColor[2], 3.0 / env.fogEnd, 0, 0.02);
-  } else {
-    setFog(env.fogColor[0], env.fogColor[1], env.fogColor[2], 0, 0, 0.02);
-  }
+  // Ambient, sun, point lights, and fog re-apply every frame through the
+  // ENGINE's shared helper — the same call the world-viewer example and any
+  // instantiateWorld consumer makes — so the editor's lighting preview cannot
+  // drift from what games render. (The renderer clears its lighting block in
+  // begin_frame; once-at-load lights a world for exactly one frame.)
+  applyWorldEnvironment(state.world);
 
   // Shadow toggling swaps render passes — only on explicit change.
   if (!state.pendingEnvironmentSync) return;
   state.pendingEnvironmentSync = false;
 
-  if (env.shadowsEnabled) {
+  if (state.world.environment.shadowsEnabled) {
     enableShadows();
   } else {
     disableShadows();

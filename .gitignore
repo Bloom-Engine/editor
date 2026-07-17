@@ -3,6 +3,7 @@ dist/
 /main
 /main.exe
 /main.pdb
+/main-*.exe
 /bloom-editor
 /bloom-editor.exe
 /bloom-editor.pdb
@@ -15,3 +16,15 @@ tools/.testout/
 
 # Scratch output written by `main --test` (round-trip self-tests)
 /__selftest_*
+
+# DirectX shader compiler, copied from ../engine/native/shared/ (see README).
+# Without these beside the exe, the Dx12 backend is unavailable and the editor
+# dies at window creation unless launched from a directory that has them.
+/dxcompiler.dll
+/dxil.dll
+
+# Repro artifacts kept beside crash dumps
+/main-*.pdb
+
+# Local recent-projects state (written to CWD)
+/.bloom-editor/

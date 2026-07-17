@@ -8,6 +8,7 @@ import { Theme } from '../theme';
 import { EditorState, ToolId } from '../../state/editor-state';
 import { newWorld, saveCurrentWorld, defaultSavePath } from '../../io/world-io';
 import { showOpenWorldDialog, showSaveWorldDialog } from '../dialogs';
+import { toggleRecentPanel } from './recent-panel';
 
 export function drawToolbar(ui: UiContext, state: EditorState): void {
   const screenW = getScreenWidth();
@@ -29,6 +30,11 @@ export function drawToolbar(ui: UiContext, state: EditorState): void {
     showOpenWorldDialog(state);
   }
   x += bw + gap;
+
+  if (toolButton(ui, 'tb_recent', 'Recent', x, y, bw + 8, false)) {
+    toggleRecentPanel();
+  }
+  x += bw + 8 + gap;
 
   if (toolButton(ui, 'tb_save', 'Save', x, y, bw, false)) {
     if (state.worldPath) {

@@ -4,8 +4,7 @@
 import {
   mat4Multiply, mat4Invert, mat4Perspective, mat4LookAt,
 } from 'bloom';
-import { OrbitCamera } from '../state/editor-state';
-import { cameraEyePosition } from './orbit-camera';
+import { OrbitCamera, cameraEyePosition } from '../state/editor-state';
 
 export interface Ray3 {
   origin: [number, number, number];
@@ -15,6 +14,23 @@ export interface Ray3 {
 // Unproject a screen-space pixel (x, y) into a world-space ray originating
 // from the camera eye and passing through the pixel on the near plane.
 // `screenW` and `screenH` are the viewport pixel dimensions.
+// ⚠ SHAPE MATTERS HERE — Perry 0.5.1208 miscompile (found 2026-07-17).
+//
+// The previous body computed each unprojected coordinate as one large
+// expression of indexed matrix reads (`m[0]*ndcX + m[4]*ndcY + …`, 16 reads,
+// twice, via an inlined helper). Perry emitted an element load with the BASE
+// REGISTER DROPPED — `vmovq 0x8, %xmm6`, a read from absolute address 8 —
+// and the editor died with 0xc0000005 on the first placement click or gizmo
+// grab. The fault was LAYOUT-SENSITIVE: adding console.error lines made it
+// vanish, which is why it dodged every earlier build (and why the smoke
+// tests, which never click, never saw it). Repro binary + dump + pdb:
+// main-repro.exe / crash_main_10580_6a59eadc.dmp.
+//
+// The dodge, same family as shooter perry-quirks #8 (clamp) and the Map-field
+// AV: hoist every element into a named scalar FIRST, then do only scalar
+// arithmetic — the exact idiom mat4Invert uses, which has always compiled
+// correctly. Pinned by testMouseRay in the self-tests, which calls this
+// function headless and would have crashed in the broken binary.
 export function mouseToWorldRay(
   cam: OrbitCamera,
   mouseX: number, mouseY: number,
@@ -36,18 +52,33 @@ export function mouseToWorldRay(
   const vp = mat4Multiply(proj, view);
   const ivp = mat4Invert(vp);
 
+  // Hoist the inverse view-projection into scalars (see the header comment —
+  // do NOT fold these back into the expressions below).
+  const m0 = ivp[0], m1 = ivp[1], m2 = ivp[2], m3 = ivp[3];
+  const m4 = ivp[4], m5 = ivp[5], m6 = ivp[6], m7 = ivp[7];
+  const m8 = ivp[8], m9 = ivp[9], m10 = ivp[10], m11 = ivp[11];
+  const m12 = ivp[12], m13 = ivp[13], m14 = ivp[14], m15 = ivp[15];
+
   // NDC coords: -1..1 range, Y flipped.
   const ndcX = ((mouseX - viewportLeft) / viewportW) * 2 - 1;
   const ndcY = 1 - ((mouseY - viewportTop) / viewportH) * 2;
 
-  // Unproject near point and far point.
-  const near = unprojectPoint(ivp, ndcX, ndcY, -1);
-  const far = unprojectPoint(ivp, ndcX, ndcY, 1);
+  // Unproject the near-plane point (ndcZ = -1)...
+  const nwInv = 1 / (m3 * ndcX + m7 * ndcY - m11 + m15);
+  const nx = (m0 * ndcX + m4 * ndcY - m8 + m12) * nwInv;
+  const ny = (m1 * ndcX + m5 * ndcY - m9 + m13) * nwInv;
+  const nz = (m2 * ndcX + m6 * ndcY - m10 + m14) * nwInv;
+
+  // ...and the far-plane point (ndcZ = +1).
+  const fwInv = 1 / (m3 * ndcX + m7 * ndcY + m11 + m15);
+  const fx = (m0 * ndcX + m4 * ndcY + m8 + m12) * fwInv;
+  const fy = (m1 * ndcX + m5 * ndcY + m9 + m13) * fwInv;
+  const fz = (m2 * ndcX + m6 * ndcY + m10 + m14) * fwInv;
 
   // Direction = far - near, normalized.
-  let dx = far[0] - near[0];
-  let dy = far[1] - near[1];
-  let dz = far[2] - near[2];
+  let dx = fx - nx;
+  let dy = fy - ny;
+  let dz = fz - nz;
   const len = Math.sqrt(dx * dx + dy * dy + dz * dz);
   if (len > 0) { dx /= len; dy /= len; dz /= len; }
 
@@ -129,18 +160,6 @@ export function rayPlaneIntersect(
 }
 
 // ---- internals -------------------------------------------------------------
-
-function unprojectPoint(
-  invViewProj: number[], ndcX: number, ndcY: number, ndcZ: number,
-): [number, number, number] {
-  const m = invViewProj;
-  const x = m[0] * ndcX + m[4] * ndcY + m[8] * ndcZ + m[12];
-  const y = m[1] * ndcX + m[5] * ndcY + m[9] * ndcZ + m[13];
-  const z = m[2] * ndcX + m[6] * ndcY + m[10] * ndcZ + m[14];
-  const w = m[3] * ndcX + m[7] * ndcY + m[11] * ndcZ + m[15];
-  const iw = 1 / w;
-  return [x * iw, y * iw, z * iw];
-}
 
 function clamp01(v: number): number {
   if (v < 0) return 0;
