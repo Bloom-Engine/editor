@@ -500,18 +500,19 @@ user does.** In rough priority:
 
 ### 5.3 Engine features the editor is blocked on
 
-- **Render-mesh-to-texture** (the obvious one): real thumbnails for models
-  and prefabs. Two editor-side approaches are now DISPROVEN with screenshots
-  (2026-07-17, details in `src/ui/thumbnails.ts`): mid-frame texture mode
-  renders nothing (the override is per-frame), and dedicated whole frames
-  engage the pipeline (GI backend re-selects) but the resulting texture still
-  draws as nothing in the 2D layer — even a bare magenta clear never shows
-  through `drawTexturePro`. The engine work is now precisely scoped: a
-  self-contained `renderModelToTexture(model, camera, size)` pass plus a
-  golden test that round-trips a rendered texture through `drawTexturePro`
-  (which today has never sampled an RT texture successfully). The editor
-  keeps its category-colored cells until then; the dedicated-frame burst
-  scaffolding is in git history, ready to resurrect.
+- ~~**Render-mesh-to-texture**~~ ✅ **DONE (2026-07-17, engine#121 + this
+  repo).** Root cause found in the engine: `begin_texture_mode`'s override
+  was only consulted by the simple 2D `end_frame` — `end_frame_with_scene`
+  (every 3D app) acquired and presented the surface unconditionally, so
+  render-to-texture had silently no-oped for 3D content since Q1. The
+  deferred path now routes its final passes into the RT and skips present.
+  The editor's dedicated-frame thumbnail burst (world hidden, one model per
+  frame, studio lighting) is live: the Models tab shows REAL rendered
+  thumbnails, screenshot-verified — the first successful RT sampling in the
+  engine. Residuals: prefab-tab thumbnails (needs leaf expansion + computed
+  AABB), a native golden test for the RT round-trip, and clicks landing
+  during the ~0.5 s post-load burst are dropped (frames are consumed
+  whole).
 - **Text-input completeness**: ~~caret movement~~ DONE 2026-07-17 (click
   places the caret, Left/Right/Home/End move it, Delete deletes forward,
   typing inserts at the caret). Still engine-blocked: clipboard paste,
