@@ -10,7 +10,7 @@
 // editable immediately, with meshes streaming in.
 
 import { readdirSync } from 'fs';
-import { loadModel, getModelBounds } from 'bloom';
+import { loadModel, unloadModel, getModelBounds, Model } from 'bloom';
 import { readFile } from 'bloom';
 import { PrefabData } from 'bloom/world';
 import {
@@ -20,10 +20,16 @@ import { basenameNoExt, categoryFromName, joinPath, projectRelative } from './pa
 import { invalidatePrefabRegistry } from '../world-sync/sync';
 
 // Reset + relist. Cheap: no GLB is opened here. Safe to call again when
-// switching projects (models from the old project leak their GPU handles —
-// the engine has no unloadModel — but a project switch is rare enough that
-// this is a known cost, not a bug).
+// switching projects: the previous project's models are unloaded first
+// (scene nodes still referencing them draw nothing for the frame or two
+// until the new world's rebuild — the GPU cache eviction makes that a safe
+// skip, not a stale render).
 export function loadAssetCatalog(state: EditorState): void {
+  for (const entry of state.catalog.models.values()) {
+    if (entry.loaded && entry.modelHandle !== 0) {
+      unloadModel({ handle: entry.modelHandle } as Model);
+    }
+  }
   state.catalog.models.clear();
   state.catalog.prefabs.clear();
   state.catalog.modelOrder.length = 0;

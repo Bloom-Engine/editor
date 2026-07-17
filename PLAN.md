@@ -513,11 +513,16 @@ user does.** In rough priority:
   AABB), a native golden test for the RT round-trip, and clicks landing
   during the ~0.5 s post-load burst are dropped (frames are consumed
   whole).
-- **Text-input completeness**: ~~caret movement~~ DONE 2026-07-17 (click
-  places the caret, Left/Right/Home/End move it, Delete deletes forward,
-  typing inserts at the caret). Still engine-blocked: clipboard paste,
-  selection ranges, hold-to-repeat (needs key-repeat events).
-- **unloadModel**: project switching currently leaks every GPU model.
+- **Text-input completeness**: ~~caret movement~~ ~~clipboard paste~~
+  ~~hold-to-repeat~~ DONE 2026-07-17 — Ctrl+V pastes at the caret, Ctrl+C
+  copies the field, arrows/Delete auto-repeat via the new `isKeyRepeated`
+  edge (its own FFI, so `isKeyPressed` stays initial-press-only for games).
+  The Windows clipboard FFI was a STUB, as were the file dialogs (Open/Save
+  buttons silently did nothing on Windows!) and `setWindowTitle` — all real
+  now. Remaining sliver: selection ranges.
+- ~~**unloadModel**~~ DONE 2026-07-17: the FFI existed with no TS wrapper, so
+  nothing could ever call it; wrapper added, and project switching now
+  unloads the previous catalog's models.
 - (Nice-to-have) UI scissor/clip rects — current clipping skips whole
   widgets; real clip rects would allow partially visible rows.
 

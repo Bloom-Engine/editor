@@ -2,16 +2,16 @@
 // and renders an editable text field. Click to focus (the click also places
 // the caret), type to edit, Enter to confirm, ESC to cancel.
 //
-// Caret editing (2026-07-17): Left/Right move, Home/End jump, Backspace
-// deletes before the caret, Delete deletes after it, and typing inserts AT
-// the caret — the widget used to be append/backspace-only, which made fixing
-// a typo at the start of a model path mean retyping the whole thing.
-// Still missing (needs engine FFI): clipboard paste, selection ranges,
-// hold-to-repeat on arrows (isKeyPressed is edge-only).
+// Caret editing (2026-07-17): Left/Right move (with hold-to-repeat via
+// isKeyRepeated), Home/End jump, Backspace deletes before the caret, Delete
+// after it, typing inserts AT the caret, Ctrl+V pastes at the caret, and
+// Ctrl+C copies the whole field (no selection ranges yet — the one piece
+// still missing).
 
 import {
   drawRect, drawRectLines, drawText, measureText, getCharPressed,
-  isKeyPressed, Key,
+  isKeyPressed, isKeyRepeated, isKeyDown, Key,
+  getClipboardText, setClipboardText,
 } from 'bloom';
 import { UiContext, pointInRect } from './ui-context';
 import { Theme } from './theme';
@@ -56,14 +56,32 @@ export function textInput(
     if (caret < 0) caret = 0;
 
     // Caret movement first, so a movement key pressed the same frame as a
-    // character applies to the pre-insert text predictably.
-    if (isKeyPressed(Key.LEFT) && caret > 0) caret--;
-    if (isKeyPressed(Key.RIGHT) && caret < ref.value.length) caret++;
+    // character applies to the pre-insert text predictably. `|| isKeyRepeated`
+    // gives hold-to-repeat without touching isKeyPressed semantics.
+    if ((isKeyPressed(Key.LEFT) || isKeyRepeated(Key.LEFT)) && caret > 0) caret--;
+    if ((isKeyPressed(Key.RIGHT) || isKeyRepeated(Key.RIGHT)) && caret < ref.value.length) caret++;
     if (isKeyPressed(Key.HOME)) caret = 0;
     if (isKeyPressed(Key.END)) caret = ref.value.length;
-    if (isKeyPressed(Key.DELETE) && caret < ref.value.length) {
+    if ((isKeyPressed(Key.DELETE) || isKeyRepeated(Key.DELETE)) && caret < ref.value.length) {
       ref.value = ref.value.substring(0, caret) + ref.value.substring(caret + 1);
       changed = true;
+    }
+
+    // Clipboard. Ctrl+V pastes at the caret (newlines flattened — these are
+    // single-line fields for names and paths); Ctrl+C copies the whole field
+    // (no selection ranges yet).
+    const ctrlHeld = isKeyDown(Key.LEFT_CONTROL) || isKeyDown(Key.RIGHT_CONTROL);
+    if (ctrlHeld && isKeyPressed(Key.V)) {
+      let paste = getClipboardText();
+      paste = paste.split('\r').join('').split('\n').join(' ');
+      if (paste.length > 0) {
+        ref.value = ref.value.substring(0, caret) + paste + ref.value.substring(caret);
+        caret += paste.length;
+        changed = true;
+      }
+    }
+    if (ctrlHeld && isKeyPressed(Key.C)) {
+      setClipboardText(ref.value);
     }
 
     // Consume characters, inserting at the caret.
