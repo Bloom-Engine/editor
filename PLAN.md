@@ -509,17 +509,24 @@ user does.** In rough priority:
   The editor's dedicated-frame thumbnail burst (world hidden, one model per
   frame, studio lighting) is live: the Models tab shows REAL rendered
   thumbnails, screenshot-verified — the first successful RT sampling in the
-  engine. Residuals: prefab-tab thumbnails (needs leaf expansion + computed
-  AABB), a native golden test for the RT round-trip, and clicks landing
-  during the ~0.5 s post-load burst are dropped (frames are consumed
-  whole).
+  engine. ~~Residuals~~ closed 2026-07-17 evening: **prefab-tab thumbnails**
+  render too (leaves expanded, combined AABB framed, per-leaf
+  drawModelTransform with tints; regenerated on prefab save;
+  screenshot-verified with a 4-prop prefab), and the **RT override is
+  pinned by a live-GPU regression test** (engine#123 —
+  `deferred_frame_writes_render_target_override` runs a headless deferred
+  frame, which pre-#121 could not render at all, and reads the clear back
+  out of the texture). Remaining quirk: clicks landing during the ~0.5 s
+  post-load thumbnail burst are dropped (frames are consumed whole).
 - **Text-input completeness**: ~~caret movement~~ ~~clipboard paste~~
   ~~hold-to-repeat~~ DONE 2026-07-17 — Ctrl+V pastes at the caret, Ctrl+C
   copies the field, arrows/Delete auto-repeat via the new `isKeyRepeated`
   edge (its own FFI, so `isKeyPressed` stays initial-press-only for games).
   The Windows clipboard FFI was a STUB, as were the file dialogs (Open/Save
   buttons silently did nothing on Windows!) and `setWindowTitle` — all real
-  now. Remaining sliver: selection ranges.
+  now. ~~Remaining sliver: selection ranges~~ DONE 2026-07-17 evening:
+  Shift+arrows/Home/End select, Ctrl+A/C/X/V act on the selection, typing
+  and Backspace/Delete replace it, highlight rendered under the text.
 - ~~**unloadModel**~~ DONE 2026-07-17: the FFI existed with no TS wrapper, so
   nothing could ever call it; wrapper added, and project switching now
   unloads the previous catalog's models.

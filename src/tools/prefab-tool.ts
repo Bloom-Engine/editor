@@ -22,6 +22,7 @@ import {
 } from 'bloom/world';
 import { EditorState, PrefabStash } from '../state/editor-state';
 import { rebuildAllSceneNodes } from '../world-sync/sync';
+import { invalidatePrefabThumbnail } from '../ui/thumbnails';
 import { frameCameraOnBounds } from '../viewport/frame';
 import { Theme } from '../ui/theme';
 
@@ -221,6 +222,8 @@ export function savePrefabToDisk(state: EditorState): boolean {
     if (!state.catalog.prefabOrder.includes(prefab.id)) {
       state.catalog.prefabOrder.push(prefab.id);
     }
+    // The preview shows the OLD children until told otherwise.
+    invalidatePrefabThumbnail(prefab.id);
     state.modified = false;
   }
   return result.ok;
