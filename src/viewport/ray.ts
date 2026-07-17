@@ -4,8 +4,7 @@
 import {
   mat4Multiply, mat4Invert, mat4Perspective, mat4LookAt,
 } from 'bloom';
-import { OrbitCamera } from '../state/editor-state';
-import { cameraEyePosition } from './orbit-camera';
+import { OrbitCamera, cameraEyePosition } from '../state/editor-state';
 
 export interface Ray3 {
   origin: [number, number, number];

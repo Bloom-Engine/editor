@@ -16,7 +16,7 @@ import {
   setWindowTitle,
 } from 'bloom';
 
-import { createEntity, Vec3Lit } from 'bloom/world';
+import { createEntity, saveWorld, Vec3Lit } from 'bloom/world';
 import { handleSelectClick } from './tools/select-tool';
 import { handlePlaceClick } from './tools/place-tool';
 
@@ -384,6 +384,19 @@ while (!windowShouldClose()) {
   // ---- finish --------------------------------------------------------------
 
   endDrawing();
+}
+
+// The window is closing. Losing edits silently is unacceptable — but so is
+// silently overwriting the real file with changes the user may have been
+// abandoning on purpose. Park them in a sibling recovery file instead;
+// openWorld announces it on the next launch. (Skipped in prefab mode: the
+// stashed WORLD is what matters there and it hasn't been touched.)
+if (state.modified && state.worldPath !== null && !state.editingPrefab) {
+  const recoverPath = state.worldPath + '.recover';
+  const res = saveWorld(recoverPath, state.world);
+  if (res.ok) {
+    console.error('editor: window closed with unsaved changes — parked in ' + recoverPath);
+  }
 }
 
 closeWindow();

@@ -1,6 +1,7 @@
 // Thin wrapper around bloom/world loader/saver for the editor.
 // Handles file path resolution and state updates (modified flag, world path).
 
+import { fileExists } from 'bloom';
 import { loadWorld, saveWorld, createEmptyWorld, listUnknownWorldFields } from 'bloom/world';
 import { EditorState, setStatus } from '../state/editor-state';
 import { rebuildAllSceneNodes } from '../world-sync/sync';
@@ -24,6 +25,11 @@ export function openWorld(state: EditorState, path: string): boolean {
       setStatus(state,
         'This file has ' + unknown.length + ' field(s) this editor does not know (e.g. ' +
         unknown[0] + ') — saving will DROP them. See console.');
+    } else if (fileExists(path + '.recover')) {
+      // A previous session closed with unsaved changes on this world.
+      setStatus(state, 'Unsaved changes from a previous session exist: ' + path + '.recover');
+      console.error('openWorld: recovery file present: ' + path + '.recover' +
+        ' — open it with --world to inspect, delete it to dismiss.');
     }
     return true;
   } catch (e) {

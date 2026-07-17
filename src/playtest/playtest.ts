@@ -8,7 +8,7 @@ import {
   disableCursor, enableCursor,
 } from 'bloom';
 import { EditorState } from '../state/editor-state';
-import { cameraEyePosition } from '../viewport/orbit-camera';
+import { cameraEyePosition } from '../state/editor-state';
 import { Theme } from '../ui/theme';
 
 const FLY_SPEED = 12;

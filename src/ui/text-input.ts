@@ -1,12 +1,27 @@
 // In-window text input widget. Consumes characters from getCharPressed()
-// and renders an editable text field. Click to focus, type to edit,
-// Enter to confirm, ESC to cancel.
+// and renders an editable text field. Click to focus (the click also places
+// the caret), type to edit, Enter to confirm, ESC to cancel.
+//
+// Caret editing (2026-07-17): Left/Right move, Home/End jump, Backspace
+// deletes before the caret, Delete deletes after it, and typing inserts AT
+// the caret — the widget used to be append/backspace-only, which made fixing
+// a typo at the start of a model path mean retyping the whole thing.
+// Still missing (needs engine FFI): clipboard paste, selection ranges,
+// hold-to-repeat on arrows (isKeyPressed is edge-only).
 
-import { drawRect, drawRectLines, drawText, measureText, getCharPressed, isKeyPressed, Key } from 'bloom';
+import {
+  drawRect, drawRectLines, drawText, measureText, getCharPressed,
+  isKeyPressed, Key,
+} from 'bloom';
 import { UiContext, pointInRect } from './ui-context';
 import { Theme } from './theme';
 
 export interface Ref<T> { value: T; }
+
+// Caret state for THE focused field (module scope: only one field is focused
+// at a time in an immediate-mode UI, keyed by widget id).
+let caretOwner: string | null = null;
+let caret = 0;
 
 export function textInput(
   ui: UiContext, id: string, ref: Ref<string>,
@@ -18,10 +33,13 @@ export function textInput(
 
   const isFocused = ui.activeId === id;
 
-  // Click to focus.
+  // Click to focus — and place the caret at the nearest character boundary
+  // to the click, so clicking mid-word edits mid-word.
   if (hovered && ui.mousePressedLeft) {
     ui.activeId = id;
     ui.mouseCaptured = true;
+    caretOwner = id;
+    caret = caretIndexAt(ref.value, ui.mouseX - (x + 4));
   }
 
   let changed = false;
@@ -29,22 +47,45 @@ export function textInput(
   if (isFocused) {
     ui.mouseCaptured = true;
 
-    // Consume characters.
+    // A field can also gain focus without a click (rare) — default to end.
+    if (caretOwner !== id) {
+      caretOwner = id;
+      caret = ref.value.length;
+    }
+    if (caret > ref.value.length) caret = ref.value.length;
+    if (caret < 0) caret = 0;
+
+    // Caret movement first, so a movement key pressed the same frame as a
+    // character applies to the pre-insert text predictably.
+    if (isKeyPressed(Key.LEFT) && caret > 0) caret--;
+    if (isKeyPressed(Key.RIGHT) && caret < ref.value.length) caret++;
+    if (isKeyPressed(Key.HOME)) caret = 0;
+    if (isKeyPressed(Key.END)) caret = ref.value.length;
+    if (isKeyPressed(Key.DELETE) && caret < ref.value.length) {
+      ref.value = ref.value.substring(0, caret) + ref.value.substring(caret + 1);
+      changed = true;
+    }
+
+    // Consume characters, inserting at the caret.
     let c = getCharPressed();
     while (c !== 0) {
       if (c === 8) {
-        // Backspace.
-        if (ref.value.length > 0) {
-          ref.value = ref.value.substring(0, ref.value.length - 1);
+        // Backspace — delete before the caret.
+        if (caret > 0) {
+          ref.value = ref.value.substring(0, caret - 1) + ref.value.substring(caret);
+          caret--;
           changed = true;
         }
       } else if (c === 13) {
         // Enter — confirm and defocus.
         ui.activeId = null;
+        caretOwner = null;
         return true;
       } else if (c >= 32) {
         // Printable character.
-        ref.value = ref.value + String.fromCharCode(c);
+        ref.value = ref.value.substring(0, caret) + String.fromCharCode(c) +
+          ref.value.substring(caret);
+        caret++;
         changed = true;
       }
       c = getCharPressed();
@@ -53,6 +94,7 @@ export function textInput(
     // ESC cancels focus.
     if (isKeyPressed(Key.ESCAPE)) {
       ui.activeId = null;
+      caretOwner = null;
     }
   }
 
@@ -64,11 +106,27 @@ export function textInput(
   const displayText = ref.value.length > 0 ? ref.value : '';
   drawText(displayText, x + 4, y + 5, Theme.fontSizeSmall, Theme.text);
 
-  // Blinking cursor when focused.
+  // Caret when focused, at its actual position in the string.
   if (isFocused) {
-    const cursorX = x + 4 + measureText(displayText, Theme.fontSizeSmall);
-    drawRect(cursorX, y + 4, 1, h - 8, Theme.textAccent);
+    const prefix = displayText.substring(0, caret);
+    const caretX = x + 4 + measureText(prefix, Theme.fontSizeSmall);
+    drawRect(caretX, y + 4, 1, h - 8, Theme.textAccent);
   }
 
   return changed;
+}
+
+// Character boundary nearest to a pixel offset into the text. Linear scan —
+// these fields hold names and paths, not documents.
+function caretIndexAt(text: string, px: number): number {
+  if (px <= 0) return 0;
+  for (let i = 1; i <= text.length; i++) {
+    const wPrefix = measureText(text.substring(0, i), Theme.fontSizeSmall);
+    if (wPrefix > px) {
+      // Closer to the previous boundary or this one?
+      const wPrev = measureText(text.substring(0, i - 1), Theme.fontSizeSmall);
+      return (px - wPrev) < (wPrefix - px) ? i - 1 : i;
+    }
+  }
+  return text.length;
 }

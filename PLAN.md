@@ -476,24 +476,27 @@ never clicked). The lesson is structural: **the features exist; what's missing
 for production is the machinery that catches this class of failure before a
 user does.** In rough priority:
 
-### 5.1 Interaction smoke test (highest value per hour)
+### 5.1 Interaction smoke test — ✅ DONE (2026-07-17)
 
-The ad-hoc harness that caught the placement crash — launch the real binary,
-inject clicks (place / select / gizmo drag / save), assert alive + entity
-count in the saved file — should be a scripted `tools/ui-smoke.ps1` run after
-every build, because `--test` can never see input-path miscompiles it doesn't
-execute. This would have caught BOTH the key-identity bug (entity count) and
-the ray miscompile (crash) automatically. Toolchain corollary: pin the Perry
-version, re-run the smoke on every Perry upgrade, and file the kept repro pair
-(`main-repro.exe` + dump + pdb) upstream.
+> `tools/ui-smoke.ps1`: launches the real binary against a scratch copy of
+> the arena_01 fixture, injects asset-cell click → 5 placements → camera
+> orbit → select → move-gizmo drag → Ctrl+S, then asserts alive, no FATAL on
+> stderr, saved file parses, entity count grew by exactly the placements,
+> and the safe-save siblings exist. First run: PASS (8 → 13 entities).
+> Would have caught both the key-identity bug and the ray miscompile.
+> Run it after every build and every Perry upgrade. Still to do: pin the
+> Perry version formally; file the kept repro pair upstream.
 
-### 5.2 Data safety
+### 5.2 Data safety — ✅ DONE (2026-07-17)
 
-- **Atomic saves.** `saveWorld` writes in place; a crash mid-write corrupts
-  the level (and this codebase has already lived through writeFile writing
-  0 bytes and reporting success). Write `.tmp` + rename, keep one `.bak`.
-- **Confirm-on-close with unsaved changes.** Autosave narrows the window but
-  a plain X-click still silently discards up to 2 minutes of work.
+> - **Crash-safe saves** (engine `feat/safe-saves`): `saveWorld`/`savePrefab`
+>   write `.tmp` → read back + byte-compare (catches the 0-byte-write class)
+>   → snapshot `.bak` → write real. True atomic replace still wants a rename
+>   FFI. Gitignore `*.world.json.tmp/.bak` in game repos.
+> - **Exit recovery instead of confirm-on-close**: closing with unsaved
+>   changes parks them in `<world>.recover` (never silently lost, never
+>   silently overwriting); opening that world later announces the recovery
+>   file in the status bar + console.
 
 ### 5.3 Engine features the editor is blocked on
 
@@ -501,10 +504,10 @@ version, re-run the smoke on every Perry upgrade, and file the kept repro pair
   and prefabs. The current render-target API is a per-frame override consumed
   at end_frame — unusable mid-frame; needs either an immediate mode or a
   dedicated `renderModelToTexture(model, camera, size)` call.
-- **Text-input completeness**: the widget is append/backspace only — no
-  caret movement, no selection, no clipboard paste. Editing a modelRef path
-  by retyping it whole is not production UX; needs engine key events for
-  arrows/home/end plus clipboard access.
+- **Text-input completeness**: ~~caret movement~~ DONE 2026-07-17 (click
+  places the caret, Left/Right/Home/End move it, Delete deletes forward,
+  typing inserts at the caret). Still engine-blocked: clipboard paste,
+  selection ranges, hold-to-repeat (needs key-repeat events).
 - **unloadModel**: project switching currently leaks every GPU model.
 - (Nice-to-have) UI scissor/clip rects — current clipping skips whole
   widgets; real clip rects would allow partially visible rows.
@@ -512,10 +515,14 @@ version, re-run the smoke on every Perry upgrade, and file the kept repro pair
 ### 5.4 Editing depth that daily use will demand
 
 Multi-select that acts as a group (selection.ids exists; gizmos/inspector act
-on primary only), copy/paste, camera pan (orbit+zoom only today), a per-point
-river width UI, terrain resize, per-row outliner ops, world switcher listing
-`worldsDir` (Open dialog is the only path today), and a persistent log panel
-(status line is a 4-second transient — save errors deserve better).
+on primary only), copy/paste, a per-point river width UI, terrain resize,
+per-row outliner ops, world switcher listing `worldsDir` (Open dialog is the
+only path today), and a persistent log panel (status line is a 4-second
+transient — save errors deserve better). ~~Camera zoom~~ FIXED 2026-07-17:
+the wheel now dollies toward the point under the CURSOR (not the world
+center), honors multi-notch deltas, min distance 0.2, and no longer fires
+while the pointer is over a scrolling panel. Middle-drag pans, right-drag
+orbits — that was already there, just undocumented.
 
 ### 5.5 Proof obligations that remain from Part 4
 

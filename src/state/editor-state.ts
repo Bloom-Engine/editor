@@ -369,3 +369,19 @@ export function setStatus(state: EditorState, msg: string): void {
   state.statusMessage = msg;
   state.statusMessageT = 4.0;
 }
+
+// World-space eye position from the orbit parameters. Lives here (not in
+// orbit-camera.ts) so both ray.ts and orbit-camera.ts can use it without an
+// import cycle: orbit-camera needs ray math for zoom-to-cursor, and ray needs
+// the eye position — editor-state imports neither.
+export function cameraEyePosition(cam: OrbitCamera): [number, number, number] {
+  const cosPitch = Math.cos(cam.pitch);
+  const sinPitch = Math.sin(cam.pitch);
+  const cosYaw = Math.cos(cam.yaw);
+  const sinYaw = Math.sin(cam.yaw);
+
+  const x = cam.target[0] + cam.distance * cosPitch * sinYaw;
+  const y = cam.target[1] + cam.distance * (-sinPitch);
+  const z = cam.target[2] + cam.distance * cosPitch * cosYaw;
+  return [x, y, z];
+}
