@@ -62,7 +62,7 @@ import { drawInspector } from './ui/layouts/inspector';
 import { drawOutliner } from './ui/layouts/outliner';
 import { drawRecentPanel } from './ui/layouts/recent-panel';
 import { drawStatusBar } from './ui/layouts/status-bar';
-import { pumpThumbnails } from './ui/thumbnails';
+import { runThumbnailFrame } from './ui/thumbnails';
 import { runSelfTests } from './tests/self-tests';
 
 // ---- self-tests (headless) ---------------------------------------------------
@@ -151,6 +151,13 @@ let modelsPending = 1;
 // ---- main loop -------------------------------------------------------------
 
 while (!windowShouldClose()) {
+  // Thumbnail render frames are currently a no-op (see ui/thumbnails.ts for
+  // the two dead ends and the engine work they point to); the hook stays so
+  // the burst comes back the day the engine can render a model to a texture.
+  if (modelsPending === 0 && !state.playtesting && runThumbnailFrame(state)) {
+    continue;
+  }
+
   const dt = getDeltaTime();
 
   // Auto-save.
@@ -273,13 +280,6 @@ while (!windowShouldClose()) {
     b: Math.floor(envSky[2] * 255),
     a: 255,
   });
-
-  // Render missing asset thumbnails, one per frame, once models are in.
-  // Must run inside the frame but before the main 3D pass (it switches the
-  // render target and back).
-  if (modelsPending === 0 && !state.playtesting) {
-    pumpThumbnails(state, 1);
-  }
 
   // ---- 3D viewport ---------------------------------------------------------
 
