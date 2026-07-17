@@ -461,3 +461,67 @@ Every task lands with its self-test where the logic is testable headless (comman
 1. Garden adoption: product direction or testbed? (P3b blocks on this; P3a doesn't.)
 2. Should unknown-field warnings eventually harden into a versioned-strict mode (error, not warning, when `schemaVersion` claims current)? Today: warn only.
 3. Does `world-viewer` belong in `engine/examples/` (sibling to `perry-embed`) or as a `--view` mode of the editor binary? Leaning examples/ — the point is proving the path with zero editor code in the loop.
+
+---
+
+## Part 5 — Production readiness (added 2026-07-17)
+
+Parts 1–4 are feature-complete, and then two days of REAL USE found four
+"done"-but-broken things in a row: mouse hits off by the display scale (DPI),
+the editor unable to even start outside a directory carrying dxcompiler.dll,
+the whole arena invisible under `--project` (catalog key identity), and an
+0xc0000005 on the first placement click (Perry miscompiled the ray math into a
+load from absolute address 8 — layout-sensitive, invisible to every test that
+never clicked). The lesson is structural: **the features exist; what's missing
+for production is the machinery that catches this class of failure before a
+user does.** In rough priority:
+
+### 5.1 Interaction smoke test (highest value per hour)
+
+The ad-hoc harness that caught the placement crash — launch the real binary,
+inject clicks (place / select / gizmo drag / save), assert alive + entity
+count in the saved file — should be a scripted `tools/ui-smoke.ps1` run after
+every build, because `--test` can never see input-path miscompiles it doesn't
+execute. This would have caught BOTH the key-identity bug (entity count) and
+the ray miscompile (crash) automatically. Toolchain corollary: pin the Perry
+version, re-run the smoke on every Perry upgrade, and file the kept repro pair
+(`main-repro.exe` + dump + pdb) upstream.
+
+### 5.2 Data safety
+
+- **Atomic saves.** `saveWorld` writes in place; a crash mid-write corrupts
+  the level (and this codebase has already lived through writeFile writing
+  0 bytes and reporting success). Write `.tmp` + rename, keep one `.bak`.
+- **Confirm-on-close with unsaved changes.** Autosave narrows the window but
+  a plain X-click still silently discards up to 2 minutes of work.
+
+### 5.3 Engine features the editor is blocked on
+
+- **Render-mesh-to-texture** (the obvious one): real thumbnails for models
+  and prefabs. The current render-target API is a per-frame override consumed
+  at end_frame — unusable mid-frame; needs either an immediate mode or a
+  dedicated `renderModelToTexture(model, camera, size)` call.
+- **Text-input completeness**: the widget is append/backspace only — no
+  caret movement, no selection, no clipboard paste. Editing a modelRef path
+  by retyping it whole is not production UX; needs engine key events for
+  arrows/home/end plus clipboard access.
+- **unloadModel**: project switching currently leaks every GPU model.
+- (Nice-to-have) UI scissor/clip rects — current clipping skips whole
+  widgets; real clip rects would allow partially visible rows.
+
+### 5.4 Editing depth that daily use will demand
+
+Multi-select that acts as a group (selection.ids exists; gizmos/inspector act
+on primary only), copy/paste, camera pan (orbit+zoom only today), a per-point
+river width UI, terrain resize, per-row outliner ops, world switcher listing
+`worldsDir` (Open dialog is the only path today), and a persistent log panel
+(status line is a 4-second transient — save errors deserve better).
+
+### 5.5 Proof obligations that remain from Part 4
+
+The garden port (P3b, blocked on §4.4 Q1) is still the only thing that turns
+"any game CAN use this" into "a second game DOES." macOS is untested since the
+Windows bring-up — "production" means both platforms run the smoke test. And
+scale is unmeasured beyond ~250 entities: syncRebuilds does O(n) find() per
+rebuilt id and the outliner draws every row each frame; fine at hundreds,
+unknown at ten thousand.
