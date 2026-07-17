@@ -25,3 +25,6 @@ tools/.testout/
 
 # Repro artifacts kept beside crash dumps
 /main-*.pdb
+
+# Local recent-projects state (written to CWD)
+/.bloom-editor/
