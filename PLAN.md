@@ -501,9 +501,17 @@ user does.** In rough priority:
 ### 5.3 Engine features the editor is blocked on
 
 - **Render-mesh-to-texture** (the obvious one): real thumbnails for models
-  and prefabs. The current render-target API is a per-frame override consumed
-  at end_frame — unusable mid-frame; needs either an immediate mode or a
-  dedicated `renderModelToTexture(model, camera, size)` call.
+  and prefabs. Two editor-side approaches are now DISPROVEN with screenshots
+  (2026-07-17, details in `src/ui/thumbnails.ts`): mid-frame texture mode
+  renders nothing (the override is per-frame), and dedicated whole frames
+  engage the pipeline (GI backend re-selects) but the resulting texture still
+  draws as nothing in the 2D layer — even a bare magenta clear never shows
+  through `drawTexturePro`. The engine work is now precisely scoped: a
+  self-contained `renderModelToTexture(model, camera, size)` pass plus a
+  golden test that round-trips a rendered texture through `drawTexturePro`
+  (which today has never sampled an RT texture successfully). The editor
+  keeps its category-colored cells until then; the dedicated-frame burst
+  scaffolding is in git history, ready to resurrect.
 - **Text-input completeness**: ~~caret movement~~ DONE 2026-07-17 (click
   places the caret, Left/Right/Home/End move it, Delete deletes forward,
   typing inserts at the caret). Still engine-blocked: clipboard paste,

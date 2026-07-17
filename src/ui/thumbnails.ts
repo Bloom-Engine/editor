@@ -1,20 +1,30 @@
-// Asset-panel model thumbnails (PLAN §G) — render pass currently DISABLED.
+// Asset-panel model thumbnails (PLAN §G) — render pass DISABLED, twice over.
+// The asset panel draws category-colored cells instead (visible, clickable,
+// labeled); getThumbnail below always returns null and the grid falls back.
 //
-// The first implementation called beginTextureMode/endTextureMode mid-frame,
-// raylib-style. The engine's render targets don't work that way: the override
-// set by begin_texture_mode is consumed at END_FRAME ("the next end_frame will
-// render to this texture view instead of the surface" — renderer/mod.rs), and
-// 2D draws batch for the frame. So the thumbnail textures stayed empty and the
-// grid drew invisible images over dark panel — screenshot-verified 2026-07-16.
+// What was tried, and what each attempt established (2026-07-16/17):
 //
-// Rendering a mesh into a texture on this engine needs either (a) a dedicated
-// whole frame per thumbnail with the world's scene nodes hidden, or (b) a real
-// engine-side render-mesh-to-texture utility. Until one of those exists, the
-// asset panel draws colored placeholder cells (visible, clickable, labeled) —
-// see asset-panel.ts. The API here stays so the grid lights up the day the
-// engine call exists.
-
-import { EditorState } from '../state/editor-state';
+// 1. MID-FRAME beginTextureMode/endTextureMode, raylib-style: the engine's
+//    override is per-frame — begin_texture_mode arms it and only end_frame
+//    consumes it (renderer/mod.rs), so clearing it mid-frame renders nothing.
+//    Result: empty textures, invisible cells (screenshot-verified).
+//
+// 2. DEDICATED FRAMES: hide the world's scene nodes, draw one model, arm the
+//    override, endDrawing → the whole frame renders into the 128px target
+//    with no present. The frame pipeline demonstrably ENGAGES (the GI
+//    backend re-selects during the burst) and the world hide/unhide works —
+//    but the texture still draws as nothing in the 2D layer: even a bare
+//    magenta clearBackground never shows up when the texture is drawn via
+//    drawTexturePro (screenshot-verified). So either the compose pass does
+//    not write the RT the way begin_texture_mode's docs suggest, or 2D
+//    sampling of an RT texture is broken (bind group / alpha).
+//
+// Conclusion: this needs a focused ENGINE session — ideally a purpose-built
+// `renderModelToTexture(model, camera, size)` that runs a self-contained
+// simple pass, plus a golden test that round-trips a rendered texture
+// through drawTexturePro. Editor-side scaffolding (dedicated-frame burst,
+// world hide/unhide, framing camera) lives in git history at commit ab43000^
+// ..HEAD and can be resurrected the day the engine call exists.
 
 export const THUMB_SIZE = 128;
 
@@ -24,14 +34,14 @@ export interface ThumbnailEntry {
   height: number;
 }
 
-// No-op while the render pass is disabled. Returns 0 = "nothing pending" so
-// main.ts never waits on it.
-export function pumpThumbnails(_state: EditorState, _maxPerFrame: number): number {
-  return 0;
+import { EditorState } from '../state/editor-state';
+
+// No-op while the render pass is disabled: nothing pending, ever.
+export function runThumbnailFrame(_state: EditorState): boolean {
+  return false;
 }
 
-// Always null while the render pass is disabled — the asset panel then draws
-// its colored placeholder cell.
+// Always null — the asset panel then draws its colored placeholder cell.
 export function getThumbnail(_relPath: string): ThumbnailEntry | null {
   return null;
 }
