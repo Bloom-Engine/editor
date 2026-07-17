@@ -14,12 +14,16 @@
 import {
   loadRenderTexture, beginTextureMode, endTextureMode, getRenderTextureTexture,
   beginDrawing, endDrawing, clearBackground,
-  beginMode3D, endMode3D, drawModel, setSceneNodeVisible,
+  beginMode3D, endMode3D, drawModel, drawModelTransform, setSceneNodeVisible,
   setAmbientLight, setDirectionalLight, vec3,
   Model, Camera3D,
 } from 'bloom';
 import { EditorState } from '../state/editor-state';
 import { Vec3Lit } from 'bloom/world';
+import { mat4Identity } from 'bloom';
+import {
+  createPrefabRegistry, registerPrefab, expandPrefab, PrefabLeaf,
+} from 'bloom/world';
 
 export const THUMB_SIZE = 128;
 
@@ -62,6 +66,9 @@ export function runThumbnailFrame(state: EditorState): boolean {
   }
 
   if (relPath === null) {
+    // All models done — prefabs next (keyed 'prefab:<id>'; they need the
+    // models loaded, which is why they queue behind them).
+    if (runPrefabThumbnailFrame(state)) return true;
     if (worldHidden) setWorldVisible(state, true);
     return false;
   }
@@ -103,6 +110,102 @@ export function runThumbnailFrame(state: EditorState): boolean {
     height: THUMB_SIZE,
   });
   return true;
+}
+
+// One prefab thumbnail per frame: expand the prefab into its model leaves,
+// frame their combined world-space AABB, and draw each leaf at its matrix.
+// Prefabs whose leaves have no loaded models get a sentinel entry (handle 0)
+// so we never retry — the grid keeps its colored cell for those.
+function runPrefabThumbnailFrame(state: EditorState): boolean {
+  for (let i = 0; i < state.catalog.prefabOrder.length; i++) {
+    const prefabId = state.catalog.prefabOrder[i];
+    const key = 'prefab:' + prefabId;
+    if (thumbnails.has(key)) continue;
+
+    const registry = createPrefabRegistry();
+    for (const [, p] of state.catalog.prefabs) registerPrefab(registry, p);
+
+    const leaves: PrefabLeaf[] = [];
+    const errors: string[] = [];
+    const visited = new Set<string>();
+    expandPrefab(registry, prefabId, mat4Identity(), null, [], leaves, errors, visited, prefabId);
+
+    // Combined AABB of the leaves' transformed model bounds.
+    let any = false;
+    let minX = 0, minY = 0, minZ = 0, maxX = 0, maxY = 0, maxZ = 0;
+    for (let li = 0; li < leaves.length; li++) {
+      const me = state.catalog.models.get(leaves[li].modelRef);
+      if (!me || !me.loaded || me.modelHandle === 0) continue;
+      const m = leaves[li].worldMatrix;
+      for (let corner = 0; corner < 8; corner++) {
+        const px = (corner & 1) !== 0 ? me.boundsMax[0] : me.boundsMin[0];
+        const py = (corner & 2) !== 0 ? me.boundsMax[1] : me.boundsMin[1];
+        const pz = (corner & 4) !== 0 ? me.boundsMax[2] : me.boundsMin[2];
+        // Column-major 4x4 * point.
+        const wx = m[0] * px + m[4] * py + m[8] * pz + m[12];
+        const wy = m[1] * px + m[5] * py + m[9] * pz + m[13];
+        const wz = m[2] * px + m[6] * py + m[10] * pz + m[14];
+        if (!any) {
+          minX = wx; maxX = wx; minY = wy; maxY = wy; minZ = wz; maxZ = wz;
+          any = true;
+        } else {
+          if (wx < minX) minX = wx;
+          if (wx > maxX) maxX = wx;
+          if (wy < minY) minY = wy;
+          if (wy > maxY) maxY = wy;
+          if (wz < minZ) minZ = wz;
+          if (wz > maxZ) maxZ = wz;
+        }
+      }
+    }
+
+    if (!any) {
+      // Nothing renderable (empty prefab / models missing) — sentinel, no retry.
+      thumbnails.set(key, { textureHandle: 0, width: THUMB_SIZE, height: THUMB_SIZE });
+      continue;
+    }
+
+    const rt = loadRenderTexture(THUMB_SIZE, THUMB_SIZE);
+    if (rt === 0) {
+      renderTargetsBroken = true;
+      if (worldHidden) setWorldVisible(state, true);
+      return false;
+    }
+
+    if (!worldHidden) setWorldVisible(state, false);
+
+    beginDrawing();
+    clearBackground({ r: 24, g: 26, b: 31, a: 255 });
+    setAmbientLight({ r: 255, g: 255, b: 255, a: 255 }, 0.55);
+    setDirectionalLight(vec3(-0.5, -1.0, -0.35),
+      { r: 255, g: 250, b: 240, a: 255 }, 1.1);
+
+    beginMode3D(thumbnailCamera([minX, minY, minZ], [maxX, maxY, maxZ]));
+    for (let li = 0; li < leaves.length; li++) {
+      const me = state.catalog.models.get(leaves[li].modelRef);
+      if (!me || !me.loaded || me.modelHandle === 0) continue;
+      const t = leaves[li].tint;
+      const color = t !== null
+        ? { r: Math.floor(t[0] * 255), g: Math.floor(t[1] * 255), b: Math.floor(t[2] * 255), a: 255 }
+        : { r: 255, g: 255, b: 255, a: 255 };
+      drawModelTransform({ handle: me.modelHandle } as Model, leaves[li].worldMatrix, color);
+    }
+    endMode3D();
+
+    beginTextureMode(rt);
+    endDrawing();
+    endTextureMode();
+
+    const tex = getRenderTextureTexture(rt);
+    thumbnails.set(key, { textureHandle: tex.handle, width: THUMB_SIZE, height: THUMB_SIZE });
+    return true;
+  }
+  return false;
+}
+
+// Force a prefab's thumbnail to regenerate (called after a prefab is saved).
+export function invalidatePrefabThumbnail(prefabId: string): void {
+  thumbnails.delete('prefab:' + prefabId);
 }
 
 // Hide/show everything the world has put in the retained scene graph, so a

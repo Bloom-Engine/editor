@@ -2,11 +2,12 @@
 // and renders an editable text field. Click to focus (the click also places
 // the caret), type to edit, Enter to confirm, ESC to cancel.
 //
-// Caret editing (2026-07-17): Left/Right move (with hold-to-repeat via
-// isKeyRepeated), Home/End jump, Backspace deletes before the caret, Delete
-// after it, typing inserts AT the caret, Ctrl+V pastes at the caret, and
-// Ctrl+C copies the whole field (no selection ranges yet — the one piece
-// still missing).
+// Full editing model (completed 2026-07-17): caret movement with
+// hold-to-repeat (isKeyRepeated), Home/End, Backspace/Delete on both sides,
+// insert-at-caret, Ctrl+V/C/X/A, and SELECTION RANGES — Shift+arrows /
+// Shift+Home/End extend from an anchor, typing/paste/Backspace/Delete
+// replace or remove the selection, Ctrl+C/X copy or cut it (or the whole
+// field when nothing is selected).
 
 import {
   drawRect, drawRectLines, drawText, measureText, getCharPressed,
@@ -18,10 +19,28 @@ import { Theme } from './theme';
 
 export interface Ref<T> { value: T; }
 
-// Caret state for THE focused field (module scope: only one field is focused
-// at a time in an immediate-mode UI, keyed by widget id).
+// Caret + selection state for THE focused field (module scope: only one
+// field is focused at a time in an immediate-mode UI, keyed by widget id).
+// `selAnchor` is the fixed end of the selection; -1 = no selection.
 let caretOwner: string | null = null;
 let caret = 0;
+let selAnchor = -1;
+
+function hasSelection(): boolean {
+  return selAnchor >= 0 && selAnchor !== caret;
+}
+
+function selLo(): number { return selAnchor < caret ? selAnchor : caret; }
+function selHi(): number { return selAnchor < caret ? caret : selAnchor; }
+
+// Remove the selected range from `text`, park the caret at the cut point.
+function deleteSelection(text: string): string {
+  const lo = selLo();
+  const hi = selHi();
+  caret = lo;
+  selAnchor = -1;
+  return text.substring(0, lo) + text.substring(hi);
+}
 
 export function textInput(
   ui: UiContext, id: string, ref: Ref<string>,
@@ -34,12 +53,14 @@ export function textInput(
   const isFocused = ui.activeId === id;
 
   // Click to focus — and place the caret at the nearest character boundary
-  // to the click, so clicking mid-word edits mid-word.
+  // to the click, so clicking mid-word edits mid-word. A plain click also
+  // clears any selection.
   if (hovered && ui.mousePressedLeft) {
     ui.activeId = id;
     ui.mouseCaptured = true;
     caretOwner = id;
     caret = caretIndexAt(ref.value, ui.mouseX - (x + 4));
+    selAnchor = -1;
   }
 
   let changed = false;
@@ -51,45 +72,95 @@ export function textInput(
     if (caretOwner !== id) {
       caretOwner = id;
       caret = ref.value.length;
+      selAnchor = -1;
     }
     if (caret > ref.value.length) caret = ref.value.length;
     if (caret < 0) caret = 0;
+    if (selAnchor > ref.value.length) selAnchor = -1;
 
-    // Caret movement first, so a movement key pressed the same frame as a
-    // character applies to the pre-insert text predictably. `|| isKeyRepeated`
-    // gives hold-to-repeat without touching isKeyPressed semantics.
-    if ((isKeyPressed(Key.LEFT) || isKeyRepeated(Key.LEFT)) && caret > 0) caret--;
-    if ((isKeyPressed(Key.RIGHT) || isKeyRepeated(Key.RIGHT)) && caret < ref.value.length) caret++;
-    if (isKeyPressed(Key.HOME)) caret = 0;
-    if (isKeyPressed(Key.END)) caret = ref.value.length;
-    if ((isKeyPressed(Key.DELETE) || isKeyRepeated(Key.DELETE)) && caret < ref.value.length) {
-      ref.value = ref.value.substring(0, caret) + ref.value.substring(caret + 1);
-      changed = true;
+    const shiftHeld = isKeyDown(Key.LEFT_SHIFT) || isKeyDown(Key.RIGHT_SHIFT);
+    const ctrlHeld = isKeyDown(Key.LEFT_CONTROL) || isKeyDown(Key.RIGHT_CONTROL);
+
+    // Selection bookkeeping around caret movement: Shift starts/extends the
+    // anchor; movement WITHOUT Shift collapses the selection to the moved-to
+    // edge (the standard editor convention).
+    const movedLeft = (isKeyPressed(Key.LEFT) || isKeyRepeated(Key.LEFT));
+    const movedRight = (isKeyPressed(Key.RIGHT) || isKeyRepeated(Key.RIGHT));
+    const movedHome = isKeyPressed(Key.HOME);
+    const movedEnd = isKeyPressed(Key.END);
+    if ((movedLeft || movedRight || movedHome || movedEnd)) {
+      if (shiftHeld) {
+        if (selAnchor < 0) selAnchor = caret;
+      } else if (hasSelection()) {
+        // Collapse: Left/Home land at the low edge, Right/End at the high.
+        caret = (movedLeft || movedHome) ? selLo() : selHi();
+        selAnchor = -1;
+        // The collapse consumed this keypress.
+        if (movedHome) caret = 0;
+        if (movedEnd) caret = ref.value.length;
+        if (caret > ref.value.length) caret = ref.value.length;
+        return changed ? true : drawAndReturn(ui, id, ref, x, y, w, h, hovered, isFocused, false);
+      } else {
+        selAnchor = -1;
+      }
     }
 
-    // Clipboard. Ctrl+V pastes at the caret (newlines flattened — these are
-    // single-line fields for names and paths); Ctrl+C copies the whole field
-    // (no selection ranges yet).
-    const ctrlHeld = isKeyDown(Key.LEFT_CONTROL) || isKeyDown(Key.RIGHT_CONTROL);
+    if (movedLeft && caret > 0) caret--;
+    if (movedRight && caret < ref.value.length) caret++;
+    if (movedHome) caret = 0;
+    if (movedEnd) caret = ref.value.length;
+
+    // Delete forward: removes the selection if there is one.
+    if (isKeyPressed(Key.DELETE) || isKeyRepeated(Key.DELETE)) {
+      if (hasSelection()) {
+        ref.value = deleteSelection(ref.value);
+        changed = true;
+      } else if (caret < ref.value.length) {
+        ref.value = ref.value.substring(0, caret) + ref.value.substring(caret + 1);
+        changed = true;
+      }
+    }
+
+    // Clipboard + select-all. Ctrl+C/X act on the selection when one exists,
+    // else the whole field; Ctrl+V replaces the selection.
+    if (ctrlHeld && isKeyPressed(Key.A)) {
+      selAnchor = 0;
+      caret = ref.value.length;
+    }
+    if (ctrlHeld && isKeyPressed(Key.C)) {
+      setClipboardText(hasSelection() ? ref.value.substring(selLo(), selHi()) : ref.value);
+    }
+    if (ctrlHeld && isKeyPressed(Key.X)) {
+      if (hasSelection()) {
+        setClipboardText(ref.value.substring(selLo(), selHi()));
+        ref.value = deleteSelection(ref.value);
+      } else {
+        setClipboardText(ref.value);
+        ref.value = '';
+        caret = 0;
+      }
+      changed = true;
+    }
     if (ctrlHeld && isKeyPressed(Key.V)) {
       let paste = getClipboardText();
       paste = paste.split('\r').join('').split('\n').join(' ');
       if (paste.length > 0) {
+        if (hasSelection()) ref.value = deleteSelection(ref.value);
         ref.value = ref.value.substring(0, caret) + paste + ref.value.substring(caret);
         caret += paste.length;
         changed = true;
       }
     }
-    if (ctrlHeld && isKeyPressed(Key.C)) {
-      setClipboardText(ref.value);
-    }
 
-    // Consume characters, inserting at the caret.
+    // Consume characters, inserting at the caret (replacing any selection).
     let c = getCharPressed();
     while (c !== 0) {
       if (c === 8) {
-        // Backspace — delete before the caret.
-        if (caret > 0) {
+        // Backspace — the selection if any, else the char before the caret.
+        if (hasSelection()) {
+          ref.value = deleteSelection(ref.value);
+          changed = true;
+        } else if (caret > 0) {
           ref.value = ref.value.substring(0, caret - 1) + ref.value.substring(caret);
           caret--;
           changed = true;
@@ -98,13 +169,19 @@ export function textInput(
         // Enter — confirm and defocus.
         ui.activeId = null;
         caretOwner = null;
+        selAnchor = -1;
         return true;
       } else if (c >= 32) {
-        // Printable character.
-        ref.value = ref.value.substring(0, caret) + String.fromCharCode(c) +
-          ref.value.substring(caret);
-        caret++;
-        changed = true;
+        // Printable character. Ctrl chords already handled above; the ones
+        // that reach here as control chars were filtered by c >= 32, but
+        // Ctrl+letter also arrives as a char on some layouts — skip those.
+        if (!ctrlHeld) {
+          if (hasSelection()) ref.value = deleteSelection(ref.value);
+          ref.value = ref.value.substring(0, caret) + String.fromCharCode(c) +
+            ref.value.substring(caret);
+          caret++;
+          changed = true;
+        }
       }
       c = getCharPressed();
     }
@@ -113,19 +190,36 @@ export function textInput(
     if (isKeyPressed(Key.ESCAPE)) {
       ui.activeId = null;
       caretOwner = null;
+      selAnchor = -1;
     }
   }
 
-  // Draw.
+  return drawAndReturn(ui, id, ref, x, y, w, h, hovered, isFocused, changed);
+}
+
+function drawAndReturn(
+  ui: UiContext, id: string, ref: Ref<string>,
+  x: number, y: number, w: number, h: number,
+  hovered: boolean, isFocused: boolean, changed: boolean,
+): boolean {
   const bg = isFocused ? Theme.fieldHover : (hovered ? Theme.fieldHover : Theme.field);
   drawRect(x, y, w, h, bg);
   drawRectLines(x, y, w, h, 1, isFocused ? Theme.textAccent : Theme.border);
 
   const displayText = ref.value.length > 0 ? ref.value : '';
+
+  // Selection highlight under the text.
+  if (isFocused && caretOwner === id && hasSelection()) {
+    const loX = measureText(displayText.substring(0, selLo()), Theme.fontSizeSmall);
+    const hiX = measureText(displayText.substring(0, selHi()), Theme.fontSizeSmall);
+    drawRect(x + 4 + loX, y + 3, hiX - loX, h - 6,
+      { r: 70, g: 110, b: 180, a: 160 });
+  }
+
   drawText(displayText, x + 4, y + 5, Theme.fontSizeSmall, Theme.text);
 
   // Caret when focused, at its actual position in the string.
-  if (isFocused) {
+  if (isFocused && caretOwner === id) {
     const prefix = displayText.substring(0, caret);
     const caretX = x + 4 + measureText(prefix, Theme.fontSizeSmall);
     drawRect(caretX, y + 4, 1, h - 8, Theme.textAccent);

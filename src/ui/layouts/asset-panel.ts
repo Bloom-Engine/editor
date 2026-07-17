@@ -212,7 +212,20 @@ function drawPrefabList(
     return;
   }
 
+  // Thumbnail grid, same shape as the Models tab (rendered prefab previews
+  // where available, colored cells while models stream / for empty prefabs).
+  const cell = 64;
+  const cellLabelH = 13;
+  const cellH = cell + cellLabelH + 6;
+  const cellGap = 6;
+  const innerX = panelX + Theme.padding;
+  const innerW = panelW - Theme.padding * 2;
+  let cols = Math.floor((innerW + cellGap) / (cell + cellGap));
+  if (cols < 1) cols = 1;
+
   let selectedId: string | null = null;
+  let col = 0;
+  let rowY = ui.cursorY;
   for (let i = 0; i < order.length; i++) {
     const prefabId = order[i];
     const prefab = state.catalog.prefabs.get(prefabId);
@@ -220,14 +233,48 @@ function drawPrefabList(
 
     const selected = state.placeAssetRef === 'prefab:' + prefabId;
     if (selected) selectedId = prefabId;
-    const n = prefab.children.length;
-    const rowText = prefab.name + '  (' + n + ')';
-    if (listRow(ui, 'prefab_' + i, rowText, selected, 0)) {
-      state.placeAssetRef = 'prefab:' + prefabId;
-      state.activeTool = 'place';
-      selectedId = prefabId;
+
+    const x = innerX + col * (cell + cellGap);
+    const hoveredCell = pointInRect(ui.mouseX, ui.mouseY, x, rowY, cell, cellH);
+    if (hoveredCell) {
+      ui.hotId = 'prefab_' + i;
+      ui.mouseCaptured = true;
+      if (ui.mousePressedLeft) {
+        state.placeAssetRef = 'prefab:' + prefabId;
+        state.activeTool = 'place';
+        selectedId = prefabId;
+      }
+    }
+
+    const thumb = getThumbnail('prefab:' + prefabId);
+    if (thumb !== null && thumb.textureHandle !== 0) {
+      drawTexturePro(
+        { handle: thumb.textureHandle, width: THUMB_SIZE, height: THUMB_SIZE },
+        { x: 0, y: 0, width: THUMB_SIZE, height: THUMB_SIZE },
+        { x: x, y: rowY, width: cell, height: cell },
+        { x: 0, y: 0 }, 0,
+        { r: 255, g: 255, b: 255, a: 255 },
+      );
+    } else {
+      const cc = categoryColor('prefab');
+      drawRect(x, rowY, cell, cell, { r: cc[0], g: cc[1], b: cc[2], a: 255 });
+      drawText('P', x + cell / 2 - 5, rowY + cell / 2 - 10, 20,
+        { r: 255, g: 255, b: 255, a: 230 });
+    }
+    if (selected || hoveredCell) {
+      drawRectLines(x, rowY, cell, cell, 1, selected ? Theme.textAccent : Theme.border);
+    }
+    let nameLabel = prefab.name + ' (' + prefab.children.length + ')';
+    if (nameLabel.length > 12) nameLabel = nameLabel.substring(0, 11) + '…';
+    drawText(nameLabel, x, rowY + cell + 2, Theme.fontSizeSmall, Theme.textDim);
+
+    col++;
+    if (col >= cols) {
+      col = 0;
+      rowY += cellH;
     }
   }
+  ui.cursorY = col === 0 ? rowY : rowY + cellH;
 
   // Edit the selected one. (No double-click: the UI context has no notion of one,
   // and inventing a hidden gesture is worse than a visible button.)
